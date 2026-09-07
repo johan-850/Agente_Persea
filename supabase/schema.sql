@@ -64,7 +64,9 @@ create table if not exists fotos (
     caption text,
     monitoreo_id bigint references monitoreos (id) on delete set null,
     storage_path text,
-    descripcion text
+    descripcion text,
+    es_alerta boolean not null default false,
+    motivo_alerta text
 );
 
 create index if not exists idx_fotos_fecha on fotos (fecha_hora);

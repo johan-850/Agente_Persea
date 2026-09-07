@@ -30,6 +30,36 @@ def normalizar(texto: str) -> str:
     return "".join(c for c in descompuesto if unicodedata.category(c) != "Mn")
 
 
+# Danos visibles que el PLAN MIPE asocia a las plagas cuarentenarias:
+# perforaciones y galerias de los barrenadores (Heilipus, Stenoma), aserrin de
+# las larvas, exudaciones en tallo, y la cera y melaza de cochinillas y escamas.
+#
+# Se comparan contra la DESCRIPCION de la foto, no contra el reporte escrito.
+# No identifican especie: solo indican que vale la pena que alguien mire el
+# lote, por eso la alerta que generan es de prioridad media.
+PATRONES_DANO_FOTO = [
+    (r"perforacion|perforad", "perforaciones"),
+    (r"galeria", "galerias"),
+    (r"aserrin", "aserrin de larva"),
+    (r"exudacion|exudad|gomosis", "exudaciones"),
+    (r"larva", "larvas visibles"),
+    (r"cera blanca|ceros[oa]|algodonos", "secrecion cerosa"),
+    (r"melaza|fumagina", "melaza o fumagina"),
+]
+
+
+def evaluar_dano_en_foto(descripcion: str | None) -> str | None:
+    """Devuelve el motivo si la descripcion de una foto sugiere dano compatible
+    con plaga cuarentenaria, o None si no coincide con ningun patron.
+    """
+    if not descripcion:
+        return None
+
+    texto = normalizar(descripcion)
+    motivos = [motivo for patron, motivo in PATRONES_DANO_FOTO if re.search(patron, texto)]
+    return ", ".join(motivos) if motivos else None
+
+
 def evaluar_alerta_monitoreo(texto: str) -> tuple[bool, str | None, str | None]:
     """Devuelve (es_alerta, tipo_alerta, prioridad) segun el texto completo
     del mensaje. Ver alertas_service.evaluar_alerta para la justificacion de

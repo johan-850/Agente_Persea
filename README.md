@@ -183,6 +183,10 @@ Se guardan en `2026/09/2026-09-03_la-linda_lote-5_a1b2c3d4.jpg`: agrupadas por m
 
 **La descripción es apoyo, no diagnóstico.** El prompt pide describir lo observable (parte de la planta, tipo de daño, extensión) y **prohíbe explícitamente afirmar especies**. Un modelo de propósito general no distingue de forma confiable un picudo de otro ni una escama de otra a partir de una foto, y una decisión fitosanitaria basada en eso sería un error. La identificación la hace el agrónomo.
 
+**Pero la foto puede levantar la mano.** La descripción se compara contra los daños que el PLAN MIPE asocia a las plagas cuarentenarias — perforaciones, galerías, aserrín, exudaciones, larvas, cera y melaza. Si coincide, se genera una alerta de **prioridad media** redactada como algo a verificar, nunca como diagnóstico.
+
+Esto cubre un hueco real: si la monitora fotografía un fruto perforado pero solo escribe *"mosca blanca"*, el reporte no dispara alerta y el hallazgo se pierde. Con esta regla, la foto avisa igual. Para no duplicar avisos, si el reporte escrito **ya** generó alerta en ese lote, la foto no vuelve a notificar.
+
 **El bucket es privado.** Las fotos pueden mostrar trabajadores y detalles de las fincas, así que no quedan tras una URL pública: la base guarda solo la ruta y el enlace se firma en el momento (`GET /fotos/{id}/enlace`), con vencimiento.
 
 **Capacidad.** Storage es una cuota aparte de la base de datos (1 GB vs 500 MB en el plan gratuito), así que las fotos no consumen espacio de las tablas. A ~200 KB por foto comprimida por WhatsApp, 1 GB alcanza para unas 5.000 fotos.
@@ -201,6 +205,7 @@ Definidas en `app/services/alertas_monitoreo_service.py` y evaluadas sobre el te
 | Accidente (`accidente`, `herido`, `lesión`…) | alta | — |
 | La palabra **`activo`** | alta | Es el marcador que el propio equipo usa para señalar un foco urgente (*"Un foco de escamas ACTIVO"*). |
 | Término de grupo sin especie (`escama`, `cochinilla`) | media | Puede ser cuarentenaria o no, y del texto no hay forma de saberlo. Se avisa para verificar en campo. |
+| Daño visible en una foto (perforaciones, galerías, aserrín, exudaciones, cera, melaza) | media | Se evalúa sobre la *descripción* de la imagen, no sobre el reporte escrito. Ver [Fotos](#fotos). |
 
 Las 8 plagas cuarentenarias del cultivo (aguacate Hass) son *Heilipus lauri*, *Heilipus elegans*, *Stenoma catenifer*, *Maconellicoccus hirsutus*, *Pseudococcus jackbeardsleyi*, *Pseudococcus landoi*, *Ceroplastes rubens* y *Saissetia batesi*. La comparación ignora mayúsculas y tildes, porque en campo se escribe indistintamente *ácaro*/*acaro* o *pseudocercóspora*/*pseudocercosphora*.
 

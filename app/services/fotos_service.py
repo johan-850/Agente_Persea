@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.db.supabase_client import get_client
 from app.services import meta_whatsapp_service, storage_service, vision_service
+from app.services.alertas_monitoreo_service import evaluar_dano_en_foto
 
 logger = logging.getLogger("fotos")
 
@@ -47,7 +48,7 @@ def _monitoreo_relacionado(remitente: str) -> dict | None:
     filas = (
         get_client()
         .table("monitoreos")
-        .select("id, finca, lote")
+        .select("id, finca, lote, es_alerta")
         .eq("remitente", remitente)
         .gte("fecha_hora", desde)
         .order("fecha_hora", desc=True)
@@ -100,6 +101,8 @@ def procesar_foto(media_id: str, remitente: str, caption: str | None = None) -> 
     except Exception:
         logger.exception("No se pudo archivar la foto %s", media_id)
 
+    motivo_alerta = evaluar_dano_en_foto(descripcion)
+
     registro = {
         "remitente": remitente,
         "media_id": media_id,
@@ -107,6 +110,47 @@ def procesar_foto(media_id: str, remitente: str, caption: str | None = None) -> 
         "monitoreo_id": monitoreo["id"] if monitoreo else None,
         "storage_path": storage_path,
         "descripcion": descripcion,
+        "es_alerta": bool(motivo_alerta),
+        "motivo_alerta": motivo_alerta,
     }
 
-    return get_client().table("fotos").insert(registro).execute().data[0]
+    guardada = get_client().table("fotos").insert(registro).execute().data[0]
+
+    # Si el reporte escrito ya genero alerta, el administrador ya fue avisado
+    # de ese lote y repetir seria ruido.
+    if motivo_alerta and not (monitoreo and monitoreo.get("es_alerta")):
+        _notificar_dano_en_foto(guardada, monitoreo, motivo_alerta)
+
+    return guardada
+
+
+def _notificar_dano_en_foto(foto: dict, monitoreo: dict | None, motivo: str) -> None:
+    """Avisa que una foto muestra dano compatible con plaga cuarentenaria.
+
+    Prioridad media y redactado como algo a verificar, no como diagnostico: la
+    descripcion viene de un modelo que tiene prohibido afirmar especies.
+    """
+    descripcion = foto.get("descripcion") or "sin descripcion"
+    respaldo = (
+        f"📷 Foto con posible dano de plaga cuarentenaria ({motivo})\n"
+        f"Finca: {(monitoreo or {}).get('finca') or 'no especificada'}\n"
+        f"Lote: {(monitoreo or {}).get('lote') or 'no especificado'}\n"
+        f"Descripcion: {descripcion}\n"
+        "Verificar en campo."
+    )
+
+    try:
+        meta_whatsapp_service.enviar_plantilla_a_administradores(
+            meta_whatsapp_service.PLANTILLA_ALERTA,
+            [
+                "media",
+                (monitoreo or {}).get("finca") or "no especificada",
+                (monitoreo or {}).get("lote") or "no especificado",
+                f"foto sugiere {motivo}: {descripcion}",
+                "posible dano de plaga cuarentenaria, verificar en campo",
+                foto.get("remitente") or "desconocido",
+            ],
+            respaldo=respaldo,
+        )
+    except Exception:
+        logger.exception("No se pudo avisar del dano visto en la foto %s", foto.get("id"))

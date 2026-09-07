@@ -11,7 +11,10 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.services.alertas_monitoreo_service import evaluar_alerta_monitoreo  # noqa: E402
+from app.services.alertas_monitoreo_service import (  # noqa: E402
+    evaluar_alerta_monitoreo,
+    evaluar_dano_en_foto,
+)
 
 CASOS = [
     (
@@ -61,22 +64,70 @@ CASOS = [
 ]
 
 
+# Descripciones de fotos. La descripcion la produce el modelo de vision, que
+# tiene prohibido nombrar especies, asi que aqui solo se buscan danos visibles.
+CASOS_FOTO = [
+    (
+        "Perforaciones en fruto: dano tipico de los barrenadores del plan",
+        "Se observan frutos de aguacate Hass con multiples perforaciones pequenas y "
+        "oscuras, acompanadas de exudaciones blanquecinas alrededor de las lesiones.",
+        True,
+    ),
+    (
+        "Cera blanca de cochinilla",
+        "Rama con presencia de insectos cubiertos de una secrecion cerosa blanca, "
+        "con acumulacion de melaza en la superficie.",
+        True,
+    ),
+    (
+        "Manchas foliares: son enfermedades comunes, no cuarentenarias",
+        "Hoja con manchas pequenas de color cafe oscuro, de bordes irregulares y "
+        "halo clorotico alrededor.",
+        False,
+    ),
+    (
+        "Foto sin cultivo",
+        "Se observa una persona de pie en un camino de tierra, sin cultivo visible.",
+        False,
+    ),
+    (
+        "Sin descripcion disponible",
+        None,
+        False,
+    ),
+]
+
+
 def main() -> int:
     fallos = 0
+
+    print("REGLAS SOBRE EL REPORTE ESCRITO")
     for descripcion, texto, esperado in CASOS:
         es_alerta, tipo, prioridad = evaluar_alerta_monitoreo(texto)
         if es_alerta != esperado:
             fallos += 1
-            print(f"FALLA: {descripcion}")
-            print(f"  esperado es_alerta={esperado}, obtenido {es_alerta} ({tipo})")
+            print(f"  FALLA: {descripcion}")
+            print(f"    esperado es_alerta={esperado}, obtenido {es_alerta} ({tipo})")
         else:
-            print(f"ok: {descripcion} -> {tipo or 'sin alerta'}")
+            print(f"  ok: {descripcion} -> {tipo or 'sin alerta'}")
 
     print()
+    print("PATRONES DE DANO EN FOTOS")
+    for descripcion, texto, esperado in CASOS_FOTO:
+        motivo = evaluar_dano_en_foto(texto)
+        if bool(motivo) != esperado:
+            fallos += 1
+            print(f"  FALLA: {descripcion}")
+            print(f"    esperado alerta={esperado}, obtenido {bool(motivo)} ({motivo})")
+        else:
+            print(f"  ok: {descripcion} -> {motivo or 'sin alerta'}")
+
+    total = len(CASOS) + len(CASOS_FOTO)
+    print()
     if fallos:
-        print(f"{fallos} de {len(CASOS)} casos fallaron")
+        print(f"{fallos} de {total} casos fallaron")
         return 1
-    print(f"{len(CASOS)} casos OK")
+    print(f"{total} casos OK")
     return 0
 
 
