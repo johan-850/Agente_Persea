@@ -52,3 +52,22 @@ create index if not exists idx_monitoreos_fecha on monitoreos (fecha_hora);
 create index if not exists idx_monitoreos_alerta on monitoreos (es_alerta);
 create index if not exists idx_monitoreos_lote on monitoreos (lote);
 create index if not exists idx_monitoreos_finca on monitoreos (finca);
+
+-- Fotos que acompanan los reportes. Las monitoras suelen mandarlas en un
+-- mensaje aparte del texto, por eso monitoreo_id puede quedar en null: se
+-- guarda igual para no perder la evidencia.
+create table if not exists fotos (
+    id bigint generated always as identity primary key,
+    fecha_hora timestamptz not null default now(),
+    remitente text not null,
+    media_id text not null,
+    caption text,
+    monitoreo_id bigint references monitoreos (id) on delete set null,
+    drive_file_id text,
+    drive_url text,
+    descripcion text
+);
+
+create index if not exists idx_fotos_fecha on fotos (fecha_hora);
+create index if not exists idx_fotos_monitoreo on fotos (monitoreo_id);
+create index if not exists idx_fotos_remitente on fotos (remitente);

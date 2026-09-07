@@ -40,6 +40,26 @@ def limpiar_parametro(valor, maximo: int = MAX_LARGO_PARAMETRO) -> str:
     return limpio or "no especificado"
 
 
+def descargar_media(media_id: str) -> tuple[bytes, str]:
+    """Descarga un archivo recibido por WhatsApp. Devuelve (bytes, mime_type).
+
+    Son dos pasos: el webhook solo trae un media_id, hay que pedirle a Meta la
+    URL temporal y descargarla con el mismo token (la URL sola no sirve).
+    """
+    respuesta = httpx.get(
+        f"https://graph.facebook.com/v21.0/{media_id}",
+        headers=_headers(),
+        timeout=30,
+    )
+    respuesta.raise_for_status()
+    datos = respuesta.json()
+
+    archivo = httpx.get(datos["url"], headers=_headers(), timeout=120)
+    archivo.raise_for_status()
+
+    return archivo.content, datos.get("mime_type", "image/jpeg")
+
+
 def enviar_mensaje(numero_destino: str, texto: str) -> None:
     """Mensaje libre. Solo se entrega si el destinatario le escribio al bot en
     las ultimas 24 horas (ventana de atencion de WhatsApp).

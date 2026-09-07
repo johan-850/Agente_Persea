@@ -7,3 +7,7 @@ pydantic==2.9.2
 twilio==9.3.2
 apscheduler==3.10.4
 python-multipart==0.0.9
+
+# Solo para scripts/autorizar_drive.py, que se corre una vez. En tiempo de
+# ejecucion Drive se usa por HTTP con httpx.
+google-auth-oauthlib==1.2.1

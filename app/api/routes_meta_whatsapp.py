@@ -5,9 +5,34 @@ from fastapi import APIRouter, Request, Response
 
 logger = logging.getLogger("meta_webhook")
 
+from app.services.fotos_service import procesar_foto
 from app.services.monitoreo_service import procesar_mensaje_monitoreo
 
 router = APIRouter()
+
+
+def _procesar_mensaje(mensaje: dict) -> None:
+    numero = mensaje.get("from")
+    if not numero:
+        return
+    remitente = f"whatsapp:+{numero}"
+
+    if mensaje.get("type") == "image":
+        imagen = mensaje.get("image", {})
+        media_id = imagen.get("id")
+        caption = imagen.get("caption")
+        if not media_id:
+            return
+        # Si la foto trae caption con el reporte, se procesa primero para que
+        # exista el monitoreo al que la foto se va a asociar.
+        if caption:
+            procesar_mensaje_monitoreo(texto=caption, remitente=remitente)
+        procesar_foto(media_id=media_id, remitente=remitente, caption=caption)
+        return
+
+    texto = mensaje.get("text", {}).get("body")
+    if texto:
+        procesar_mensaje_monitoreo(texto=texto, remitente=remitente)
 
 
 @router.get("/meta/webhook")
@@ -30,16 +55,12 @@ async def recibir_mensaje_meta(request: Request):
             for estado in valor.get("statuses", []):
                 logger.warning("ESTADO DE MENSAJE: %s", estado)
             for mensaje in valor.get("messages", []):
-                texto = mensaje.get("text", {}).get("body")
-                remitente = mensaje.get("from")
-                if not (texto and remitente):
-                    continue
                 try:
-                    procesar_mensaje_monitoreo(texto=texto, remitente=f"whatsapp:+{remitente}")
+                    _procesar_mensaje(mensaje)
                 except Exception:
                     # Devolver 500 haria que Meta reintente y, si falla seguido,
                     # desactive la suscripcion del webhook. Se registra el error
                     # y se responde 200 igual.
-                    logger.exception("Fallo procesando mensaje de %s: %s", remitente, texto)
+                    logger.exception("Fallo procesando mensaje: %s", mensaje.get("id"))
 
     return Response(status_code=200)
