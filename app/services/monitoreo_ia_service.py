@@ -15,6 +15,43 @@ TIPOS_LABOR_MONITOREO = [
 
 PLACEHOLDERS_INVALIDOS = {"<unknown>", "unknown", "n/a", "na", "no especificado", "no aplica", ""}
 
+# Catalogo del PLAN MIPE de Agricola Persea (aguacate Hass). Sirve para que el
+# modelo normalice los nombres que las monitoras escriben de formas muy
+# distintas ("pseudocercosphora", "cefaleurus", "acaro en ninfa y adulto").
+CATALOGO_PLAGAS = """
+Plagas CUARENTENARIAS (umbral 0%: cualquier presencia es alerta):
+- Heilipus lauri (barrenador de semilla)
+- Heilipus elegans (barrenador de tallo)
+- Stenoma catenifer (pasador del fruto)
+- Maconellicoccus hirsutus (cochinilla rosada del hibisco)
+- Pseudococcus jackbeardsleyi (cochinilla harinosa de Jack Beardsley)
+- Pseudococcus landoi (cochinilla harinosa de Lando)
+- Ceroplastes rubens (escama cerosa roja)
+- Saissetia batesi (escama hemisferica del aguacate)
+
+Plagas de importancia economica (no cuarentenarias):
+- Oligonychus yothersi (acaro cafe)
+- Monalonion velezangeli
+- Astaena aff pygidialis
+- Amorbia emigratella / Platynota sp.
+- Frankliniella occidentalis, Heliothrips haemorrhoidalis (trips)
+- Compsus sp.
+- Bruggmanniella perseae
+- Diabrotica balteata
+- Copturomimus perseae
+
+Enfermedades:
+- Verticillium dahliae (marchitamiento)
+- Pseudocercospora purpurea (mancha angular de la hoja / peca del fruto)
+- Colletotrichum gloeosporioides y C. acutatum (antracnosis)
+- Phytophthora cinnamomi (pudricion de raiz)
+- Chancro bacteriano (varias especies)
+
+Otros hallazgos frecuentes que no son plagas del catalogo: mosca blanca,
+cephaleuros, doctoriella sacc, sphaceloma, suelda, arboles cloroticos,
+resiembras muertas, fruta con golpe de sol, arvenses, comedores de follaje.
+"""
+
 SYSTEM_PROMPT = f"""Eres un asistente que extrae datos estructurados de reportes
 de monitoreo de plagas agricolas enviados por WhatsApp. Los mensajes son texto
 libre, desordenado, con emojis, viñetas variadas y formatos distintos segun
@@ -43,6 +80,9 @@ Para cada lote extrae:
   "mosca blanca - alta poblacion"). Preserva la palabra "ACTIVO" en mayuscula
   si el texto la usa asi, es una senal importante. No inventes plagas que no
   esten en el texto.
+  Usa el catalogo de abajo para normalizar nombres mal escritos o abreviados
+  ("pseudocercosphora" -> "pseudocercospora", "cefaleurus" -> "cephaleuros"),
+  pero conserva siempre el descriptor de severidad que puso la monitora.
 - nota: contexto adicional relevante que no encaje en los campos anteriores
   (interrupciones por clima, transiciones entre lotes, conteos especificos
   como numero de larvas encontradas, etc). Puede ser null.
@@ -54,7 +94,9 @@ Para cada lote extrae:
 Si un campo no aplica, usa null (o lista vacia si aplica). NUNCA escribas
 placeholders como "<UNKNOWN>", "N/A" o "no especificado" como valor - siempre
 usa null. No inventes datos que no esten en el texto.
-"""
+
+CATALOGO DE PLAGAS Y ENFERMEDADES DEL CULTIVO
+{CATALOGO_PLAGAS}"""
 
 REPORTE_MONITOREO_TOOL = {
     "name": "extraer_reportes_monitoreo",

@@ -2,9 +2,47 @@
 no depender solo del modelo en algo critico (falsos negativos son costosos).
 """
 
-# TODO: completar con la lista oficial de plagas cuarentenarias del cultivo.
+# Plagas cuarentenarias del PLAN MIPE de Agricola Persea (aguacate Hass).
+# Umbral de dano 0%: cualquier presencia genera accion de manejo, sin importar
+# si el reporte la describe como foco activo o no.
+#
+# Se incluyen nombre cientifico, genero y nombre comun porque las monitoras
+# escriben indistintamente ("stenoma en rama", "barrenador de tallo").
+# Todo en minuscula y sin tildes: el texto se normaliza antes de comparar.
 PLAGAS_CUARENTENARIAS = [
-    "heilipus elegans",
+    # Heilipus lauri (barrenador de semilla) y H. elegans (barrenador de tallo)
+    "heilipus",
+    "barrenador de semilla",
+    "barrenador de tallo",
+    # Stenoma catenifer (pasador del fruto)
+    "stenoma",
+    "pasador del fruto",
+    # Maconellicoccus hirsutus (cochinilla rosada del hibisco)
+    "maconellicoccus",
+    "cochinilla rosada",
+    # Pseudococcus jackbeardsleyi y P. landoi (cochinillas harinosas)
+    "pseudococcus",
+    "jackbeardsleyi",
+    "landoi",
+    # Ceroplastes rubens (escama cerosa roja)
+    "ceroplastes",
+    "escama cerosa",
+    "escama roja",
+    # Saissetia batesi (escama hemisferica del aguacate)
+    "saissetia",
+    "escama hemisferica",
+]
+
+# Terminos de grupo que NO identifican especie. Una "escama" o una "cochinilla"
+# puede ser cuarentenaria (Ceroplastes, Saissetia, Pseudococcus, Maconellicoccus)
+# o no serlo, y del texto no hay forma de saberlo. Se alerta igual, pero con
+# menor prioridad y marcada como pendiente de confirmar en campo.
+GRUPOS_SIN_ESPECIE = [
+    "escama",
+    "escamas",
+    "cochinilla",
+    "cochinillas",
+    "piojo harinoso",
 ]
 
 FRASES_FOCO_ACTIVO = [

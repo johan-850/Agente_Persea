@@ -5,32 +5,53 @@ vocabulario rutinario (aparece en casi todo hallazgo normal), asi que NO se
 usa como disparador aqui. En cambio "activo" es el marcador que el propio
 equipo de monitoreo usa para senalar un foco urgente (ej. "foco de escamas
 ACTIVO"), y es una senal mucho mas confiable en este dominio.
+
+Las plagas cuarentenarias tienen umbral de dano 0% segun el PLAN MIPE: basta
+su presencia, sin importar como se describa.
 """
 
 import re
+import unicodedata
 
-from app.services.alertas_service import PALABRAS_ACCIDENTE, PLAGAS_CUARENTENARIAS
+from app.services.alertas_service import (
+    GRUPOS_SIN_ESPECIE,
+    PALABRAS_ACCIDENTE,
+    PLAGAS_CUARENTENARIAS,
+)
 
 _PATRON_ACTIVO = re.compile(r"\bactivo[s]?\b", re.IGNORECASE)
 
 
-def evaluar_alerta_monitoreo(texto: str) -> tuple[bool, str | None, str | None]:
-    """Devuelve (es_alerta, tipo_alerta, prioridad) basado en reglas duras
-    sobre el texto completo del mensaje. Ver alertas_service.evaluar_alerta
-    para la justificacion general de por que existen reglas duras ademas
-    del criterio de la IA.
+def normalizar(texto: str) -> str:
+    """Minusculas y sin tildes. Las monitoras escriben indistintamente
+    "acaro"/"ácaro" o "pseudocercospora"/"pseudocercóspora".
     """
-    texto_normalizado = texto.lower()
+    descompuesto = unicodedata.normalize("NFD", texto.lower())
+    return "".join(c for c in descompuesto if unicodedata.category(c) != "Mn")
+
+
+def evaluar_alerta_monitoreo(texto: str) -> tuple[bool, str | None, str | None]:
+    """Devuelve (es_alerta, tipo_alerta, prioridad) segun el texto completo
+    del mensaje. Ver alertas_service.evaluar_alerta para la justificacion de
+    por que existen reglas duras ademas del criterio de la IA.
+    """
+    texto_normalizado = normalizar(texto)
 
     for plaga in PLAGAS_CUARENTENARIAS:
         if plaga in texto_normalizado:
             return True, "plaga_cuarentenaria", "alta"
 
-    if _PATRON_ACTIVO.search(texto):
+    for palabra in PALABRAS_ACCIDENTE:
+        if normalizar(palabra) in texto_normalizado:
+            return True, "accidente", "alta"
+
+    if _PATRON_ACTIVO.search(texto_normalizado):
         return True, "foco_activo", "alta"
 
-    for palabra in PALABRAS_ACCIDENTE:
-        if palabra in texto_normalizado:
-            return True, "accidente", "alta"
+    # Un grupo sin especie no confirma cuarentena, pero tampoco la descarta.
+    # Se avisa con menor prioridad para que se verifique en campo.
+    for grupo in GRUPOS_SIN_ESPECIE:
+        if re.search(rf"\b{grupo}\b", texto_normalizado):
+            return True, "posible_plaga_cuarentenaria", "media"
 
     return False, None, None

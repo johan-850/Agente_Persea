@@ -161,9 +161,15 @@ curl -X POST http://127.0.0.1:8000/monitoreos \
 Definidas en `app/services/alertas_monitoreo_service.py` y evaluadas sobre el texto original.
 
 **Disparan alerta:**
-- Una plaga de `PLAGAS_CUARENTENARIAS`.
-- La palabra **`activo`** — el marcador que el propio equipo usa para señalar un foco urgente (*"Un foco de escamas ACTIVO"*).
-- Términos de accidente: `accidente`, `herido`, `lesión`…
+
+| Señal | Prioridad | Origen |
+|---|---|---|
+| Plaga cuarentenaria del PLAN MIPE | alta | Umbral de daño **0%**: cualquier presencia obliga a actuar, se describa como se describa. |
+| Accidente (`accidente`, `herido`, `lesión`…) | alta | — |
+| La palabra **`activo`** | alta | Es el marcador que el propio equipo usa para señalar un foco urgente (*"Un foco de escamas ACTIVO"*). |
+| Término de grupo sin especie (`escama`, `cochinilla`) | media | Puede ser cuarentenaria o no, y del texto no hay forma de saberlo. Se avisa para verificar en campo. |
+
+Las 8 plagas cuarentenarias del cultivo (aguacate Hass) son *Heilipus lauri*, *Heilipus elegans*, *Stenoma catenifer*, *Maconellicoccus hirsutus*, *Pseudococcus jackbeardsleyi*, *Pseudococcus landoi*, *Ceroplastes rubens* y *Saissetia batesi*. La comparación ignora mayúsculas y tildes, porque en campo se escribe indistintamente *ácaro*/*acaro* o *pseudocercóspora*/*pseudocercosphora*.
 
 **No disparan:** `daño` / `daños`. En monitoreo de plagas es vocabulario rutinario (*"daño por comedores de follaje"*) y marcaría casi todos los reportes, volviendo la alerta inútil.
 
@@ -180,9 +186,16 @@ Estas no son decisiones del proyecto, son límites de la plataforma:
 | **Formato de plantilla** | Una variable no puede ir al inicio ni al final del cuerpo, ni contener saltos de línea (`limpiar_parametro()` lo resuelve). |
 | **No hay acceso a grupos** | La API oficial solo permite conversaciones 1:1. Las monitoras escriben al bot, no al grupo. |
 
+## Pruebas
+
+Las reglas de alerta son la red de seguridad del sistema, así que tienen pruebas con casos tomados de reportes reales:
+
+```bash
+python tests/test_alertas_monitoreo.py
+```
+
 ## Roadmap
 
-- [ ] Completar `PLAGAS_CUARENTENARIAS` con la lista oficial del cultivo (hoy solo `heilipus elegans`).
 - [ ] Despliegue 24/7 — actualmente corre en local y depende de un túnel.
 - [ ] Procesar las fotos que acompañan los reportes.
 - [ ] Panel web para consultar histórico y estadísticas.
