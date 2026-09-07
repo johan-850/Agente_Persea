@@ -63,8 +63,7 @@ create table if not exists fotos (
     media_id text not null,
     caption text,
     monitoreo_id bigint references monitoreos (id) on delete set null,
-    drive_file_id text,
-    drive_url text,
+    storage_path text,
     descripcion text
 );
 

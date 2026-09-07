@@ -1,5 +1,5 @@
-"""Procesa las fotos que llegan por WhatsApp: las guarda en Drive, las
-describe y las liga al reporte al que pertenecen.
+"""Procesa las fotos que llegan por WhatsApp: las archiva, las describe y las
+liga al reporte al que pertenecen.
 """
 
 import logging
@@ -8,7 +8,7 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 
 from app.db.supabase_client import get_client
-from app.services import drive_service, meta_whatsapp_service, vision_service
+from app.services import meta_whatsapp_service, storage_service, vision_service
 
 logger = logging.getLogger("fotos")
 
@@ -58,24 +58,30 @@ def _monitoreo_relacionado(remitente: str) -> dict | None:
     return filas[0] if filas else None
 
 
-def _nombre_archivo(monitoreo: dict | None, media_id: str, mime_type: str) -> str:
-    fecha = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+def _ruta_archivo(monitoreo: dict | None, media_id: str, mime_type: str) -> str:
+    """Ruta dentro del bucket, agrupada por mes y con finca y lote en el nombre
+    para poder ubicar una foto sin consultar la base.
+    """
+    ahora = datetime.now(timezone.utc)
     extension = EXTENSIONES.get(mime_type, "bin")
+    sufijo = media_id[-8:]
 
     if monitoreo:
         finca = _limpiar_para_nombre(monitoreo.get("finca"), "sin-finca")
         lote = _limpiar_para_nombre(monitoreo.get("lote"), "sin-lote")
-        return f"{fecha}_{finca}_lote-{lote}_{media_id[-8:]}.{extension}"
+        nombre = f"{ahora:%Y-%m-%d}_{finca}_lote-{lote}_{sufijo}.{extension}"
+    else:
+        nombre = f"{ahora:%Y-%m-%d}_sin-reporte_{sufijo}.{extension}"
 
-    return f"{fecha}_sin-reporte_{media_id[-8:]}.{extension}"
+    return f"{ahora:%Y/%m}/{nombre}"
 
 
 def procesar_foto(media_id: str, remitente: str, caption: str | None = None) -> dict:
-    """Descarga la foto, la describe, la sube a Drive y la registra.
+    """Descarga la foto, la describe, la archiva y la registra.
 
-    Cada paso opcional (descripcion, Drive) se protege por separado: si Drive
-    falla no se pierde la descripcion, y si la descripcion falla la foto igual
-    queda archivada.
+    Cada paso opcional (descripcion, archivo) se protege por separado: si el
+    archivo falla no se pierde la descripcion, y si la descripcion falla la
+    foto igual queda archivada.
     """
     contenido, mime_type = meta_whatsapp_service.descargar_media(media_id)
     monitoreo = _monitoreo_relacionado(remitente)
@@ -86,24 +92,20 @@ def procesar_foto(media_id: str, remitente: str, caption: str | None = None) -> 
     except Exception:
         logger.exception("No se pudo describir la foto %s", media_id)
 
-    drive_file_id = None
-    drive_url = None
+    storage_path = None
     try:
-        subido = drive_service.subir_archivo(
-            _nombre_archivo(monitoreo, media_id, mime_type), contenido, mime_type
+        storage_path = storage_service.subir_foto(
+            _ruta_archivo(monitoreo, media_id, mime_type), contenido, mime_type
         )
-        drive_file_id = subido["id"]
-        drive_url = subido["url"]
     except Exception:
-        logger.exception("No se pudo subir a Drive la foto %s", media_id)
+        logger.exception("No se pudo archivar la foto %s", media_id)
 
     registro = {
         "remitente": remitente,
         "media_id": media_id,
         "caption": caption,
         "monitoreo_id": monitoreo["id"] if monitoreo else None,
-        "drive_file_id": drive_file_id,
-        "drive_url": drive_url,
+        "storage_path": storage_path,
         "descripcion": descripcion,
     }
 

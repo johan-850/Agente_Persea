@@ -34,7 +34,7 @@ Ese volumen de mensajes no se lee ni se consolida a mano, y los hallazgos urgent
 - **Extrae** finca, lote, tipo de labor, número de monitoras, estado del lote y plagas observadas, aunque el mensaje venga desordenado.
 - **Separa por lote**: un mensaje que reporta dos lotes genera dos registros independientes.
 - **Alerta en el momento** cuando detecta una plaga cuarentenaria, un foco marcado como `ACTIVO` o un accidente.
-- **Archiva las fotos** en Google Drive, descritas y ligadas al reporte al que pertenecen.
+- **Archiva las fotos** de los daños, descritas y ligadas al reporte al que pertenecen.
 - **Consolida el día** en un resumen automático a la hora configurada.
 - **Guarda el histórico** en Postgres, consultable para reportes posteriores.
 
@@ -58,9 +58,8 @@ Meta WhatsApp Cloud API
    FastAPI ──────► Claude Haiku 4.5   texto → extracción estructurada
       │                               foto  → descripción de apoyo
       │
-      ├──────────► Supabase / Postgres (histórico)
-      │
-      ├──────────► Google Drive        (archivo de fotos)
+      ├──────────► Supabase   Postgres → histórico
+      │                       Storage  → fotos (bucket privado)
       │
       └──────────► Plantillas WhatsApp ──► Administradores
                                             · alerta inmediata
@@ -76,8 +75,7 @@ La detección de alertas es **doble**: la IA clasifica, y además se aplican reg
 | Backend | FastAPI + Uvicorn |
 | IA | Claude Haiku 4.5 (Anthropic API) |
 | Mensajería | Meta WhatsApp Cloud API |
-| Base de datos | Supabase (PostgreSQL) |
-| Archivo de fotos | Google Drive (OAuth de usuario) |
+| Base de datos y archivos | Supabase (PostgreSQL + Storage) |
 | Scheduler | APScheduler |
 
 ## Estructura
@@ -93,16 +91,15 @@ app/
 │   ├── monitoreo_ia_service.py       # extracción con Claude (multi-lote)
 │   ├── monitoreo_service.py          # orquestación: extraer → guardar → alertar
 │   ├── alertas_monitoreo_service.py  # reglas deterministas de alerta
-│   ├── fotos_service.py              # foto → descripción → Drive → reporte
+│   ├── fotos_service.py              # foto → descripción → archivo → reporte
 │   ├── vision_service.py             # descripción de imágenes
-│   ├── drive_service.py              # subida a Google Drive
+│   ├── storage_service.py            # bucket privado de Supabase Storage
 │   ├── resumen_service.py            # consolidado diario
 │   ├── meta_whatsapp_service.py      # Cloud API: envío y descarga de media
 │   └── admin_service.py              # destinatarios de las alertas
 ├── db/supabase_client.py
 ├── models/reporte.py
 └── main.py
-scripts/autorizar_drive.py            # OAuth de Drive, se corre una vez
 supabase/schema.sql
 tests/test_alertas_monitoreo.py
 ```
@@ -140,18 +137,10 @@ copy .env.example .env
 | `META_ACCESS_TOKEN` | Token de un **system user** sin expiración. Los del quickstart caducan en horas. |
 | `META_PHONE_NUMBER_ID` | Meta → app → WhatsApp → configuración. |
 | `META_VERIFY_TOKEN` | Cadena arbitraria; debe coincidir con la registrada en el webhook. |
-| `GOOGLE_CLIENT_ID` `GOOGLE_CLIENT_SECRET` | Credencial OAuth de tipo *Aplicación de escritorio* en [console.cloud.google.com](https://console.cloud.google.com), con la Google Drive API habilitada. |
-| `GOOGLE_REFRESH_TOKEN` | Lo entrega `scripts/autorizar_drive.py`. |
-| `GOOGLE_DRIVE_FOLDER_ID` | Opcional. Id de la carpeta destino (aparece en la URL de Drive después de `/folders/`). |
+| `SUPABASE_BUCKET_FOTOS` | Opcional. Bucket donde se archivan las fotos. Default `fotos-monitoreo`. |
 | `HORA_RESUMEN_DIARIO` | Hora (0-23) del resumen. Default `17`. |
 
-Para las fotos, autorizar Drive una sola vez:
-
-```bash
-python scripts/autorizar_drive.py
-```
-
-Abre el navegador, pides permiso sobre tu cuenta y el script imprime el `GOOGLE_REFRESH_TOKEN` para pegar en el `.env`. A partir de ahí el agente renueva sus credenciales solo.
+Para las fotos, crear un bucket **privado** llamado `fotos-monitoreo` en Supabase → Storage.
 
 ### 4. Ejecutar
 
@@ -169,6 +158,8 @@ En desarrollo, exponer el puerto (`ngrok http 8000`) y registrar `https://<domin
 | `POST` | `/monitoreos` | Procesa un reporte sin pasar por WhatsApp. Útil para pruebas. |
 | `GET` | `/monitoreos?fecha=YYYY-MM-DD` | Monitoreos de un día. |
 | `GET` | `/alertas-monitoreo` | Monitoreos marcados como alerta. |
+| `GET` | `/fotos?monitoreo_id=&fecha=` | Fotos, filtrables por reporte o día. |
+| `GET` | `/fotos/{id}/enlace` | Enlace firmado y temporal para ver la foto. |
 | `POST` | `/tareas/resumen-diario` | Dispara el resumen manualmente. |
 | `GET` | `/` | Health check. |
 
@@ -188,13 +179,15 @@ Los reportes casi siempre traen fotos de daños, larvas u hojas afectadas. El ag
 2. Si llega suelta, se asocia al **último reporte de esa misma monitora en las 2 horas previas**.
 3. Si no hay ninguno, se guarda igual con `monitoreo_id` en null — mejor huérfana que colgada del lote equivocado.
 
-El archivo se nombra `2026-09-03_la-linda_lote-5_a1b2c3d4.jpg`, de modo que se ubica en Drive sin consultar la base de datos.
+Se guardan en `2026/09/2026-09-03_la-linda_lote-5_a1b2c3d4.jpg`: agrupadas por mes y con finca y lote en el nombre, para poder ubicar una foto sin consultar la base de datos.
 
 **La descripción es apoyo, no diagnóstico.** El prompt pide describir lo observable (parte de la planta, tipo de daño, extensión) y **prohíbe explícitamente afirmar especies**. Un modelo de propósito general no distingue de forma confiable un picudo de otro ni una escama de otra a partir de una foto, y una decisión fitosanitaria basada en eso sería un error. La identificación la hace el agrónomo.
 
-**Autenticación con Drive.** Se usa OAuth de usuario y no una cuenta de servicio, porque las cuentas de servicio no tienen cuota propia en Drive: subir a "Mi unidad" falla, y las Unidades compartidas —que sí funcionarían— solo existen en Google Workspace. El scope es `drive.file`, que limita el acceso a los archivos que crea la propia app: el agente no puede ver el resto de tu Drive.
+**El bucket es privado.** Las fotos pueden mostrar trabajadores y detalles de las fincas, así que no quedan tras una URL pública: la base guarda solo la ruta y el enlace se firma en el momento (`GET /fotos/{id}/enlace`), con vencimiento.
 
-Cada paso está aislado: si Drive falla no se pierde la descripción, y si la descripción falla la foto igual queda archivada.
+**Capacidad.** Storage es una cuota aparte de la base de datos (1 GB vs 500 MB en el plan gratuito), así que las fotos no consumen espacio de las tablas. A ~200 KB por foto comprimida por WhatsApp, 1 GB alcanza para unas 5.000 fotos.
+
+Cada paso está aislado: si el archivo falla no se pierde la descripción, y si la descripción falla la foto igual queda archivada.
 
 ## Reglas de alerta
 
