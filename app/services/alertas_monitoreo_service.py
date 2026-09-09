@@ -30,22 +30,44 @@ def normalizar(texto: str) -> str:
     return "".join(c for c in descompuesto if unicodedata.category(c) != "Mn")
 
 
-# Danos visibles que el PLAN MIPE asocia a las plagas cuarentenarias:
-# perforaciones y galerias de los barrenadores (Heilipus, Stenoma), aserrin de
-# las larvas, exudaciones en tallo, y la cera y melaza de cochinillas y escamas.
+# Organos que atacan los barrenadores cuarentenarios segun el PLAN MIPE:
+# Heilipus lauri el fruto, Stenoma catenifer fruto y ramas delgadas, Heilipus
+# elegans tallo y ramas. Una perforacion o galeria en HOJA es otra cosa
+# (comedores de follaje, minadores) y no debe alertar.
+_ORGANOS_BARRENADOR = r"fruto|rama|tallo|corteza|semilla|peduncul|tronco"
+
+# Ventana de caracteres alrededor del dano donde se busca el organo. Cubre una
+# frase tipica sin cruzar a la siguiente.
+_CERCANIA = 90
+
+# Danos visibles que el plan asocia a las plagas cuarentenarias. La tercera
+# columna indica si el dano solo cuenta cuando aparece sobre uno de los organos
+# de arriba.
 #
 # Se comparan contra la DESCRIPCION de la foto, no contra el reporte escrito.
 # No identifican especie: solo indican que vale la pena que alguien mire el
 # lote, por eso la alerta que generan es de prioridad media.
 PATRONES_DANO_FOTO = [
-    (r"perforacion|perforad", "perforaciones"),
-    (r"galeria", "galerias"),
-    (r"aserrin", "aserrin de larva"),
-    (r"exudacion|exudad|gomosis", "exudaciones"),
-    (r"larva", "larvas visibles"),
-    (r"cera blanca|ceros[oa]|algodonos", "secrecion cerosa"),
-    (r"melaza|fumagina", "melaza o fumagina"),
+    (r"perforacion|perforad", "perforaciones", True),
+    (r"galeria", "galerias", True),
+    (r"larva", "larvas visibles", True),
+    (r"aserrin", "aserrin de larva", False),
+    (r"exudacion|exudad|gomosis", "exudaciones", False),
+    (r"cera blanca|ceros[oa]|algodonos", "secrecion cerosa", False),
+    (r"melaza|fumagina", "melaza o fumagina", False),
 ]
+
+
+def _hay_dano(texto: str, patron: str, requiere_organo: bool) -> bool:
+    if not requiere_organo:
+        return bool(re.search(patron, texto))
+
+    for coincidencia in re.finditer(patron, texto):
+        inicio = max(0, coincidencia.start() - _CERCANIA)
+        ventana = texto[inicio : coincidencia.end() + _CERCANIA]
+        if re.search(_ORGANOS_BARRENADOR, ventana):
+            return True
+    return False
 
 
 def evaluar_dano_en_foto(
@@ -61,7 +83,11 @@ def evaluar_dano_en_foto(
 
     if descripcion:
         texto = normalizar(descripcion)
-        motivos += [motivo for patron, motivo in PATRONES_DANO_FOTO if re.search(patron, texto)]
+        motivos += [
+            motivo
+            for patron, motivo, requiere_organo in PATRONES_DANO_FOTO
+            if _hay_dano(texto, patron, requiere_organo)
+        ]
 
     for sugerida in plagas_sugeridas or []:
         nombre = normalizar(str(sugerida))

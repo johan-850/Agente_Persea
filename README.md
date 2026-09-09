@@ -190,7 +190,9 @@ Se guardan en `2026/09/2026-09-03_la-linda_lote-5_a1b2c3d4.jpg`: agrupadas por m
 
 La separación no es formalismo. El propio plan distingue *Pseudococcus jackbeardsleyi* de *P. longispinus* contando pares de filamentos de cera — una es cuarentenaria y la otra no, y esa diferencia no sale de una foto de WhatsApp comprimida. La monitora, en cambio, está ahí: puede voltear el fruto, abrirlo y usar la lupa de 20x que el plan menciona. Por eso el modelo propone y el agrónomo confirma.
 
-**La foto puede levantar la mano.** Se genera alerta de **prioridad media** si la descripción coincide con los daños que el plan asocia a cuarentenarias (perforaciones, galerías, aserrín, exudaciones, larvas, cera, melaza) **o** si alguna candidata sugerida es cuarentenaria.
+**La foto puede levantar la mano.** Se genera alerta de **prioridad media** si la descripción coincide con los daños que el plan asocia a cuarentenarias **o** si alguna candidata sugerida es cuarentenaria.
+
+Perforaciones, galerías y larvas solo cuentan cuando aparecen sobre **fruto, rama, tallo, corteza o semilla** — que es donde atacan los barrenadores del plan (*H. lauri* el fruto, *S. catenifer* fruto y ramas, *H. elegans* tallo y ramas). En hoja son comedores de follaje o minadores, hallazgos rutinarios. Sin esa distinción, una foto de una hoja mordida generaba alerta, y ese es justo el tipo de ruido que hace que dejen de mirarse.
 
 Esto cubre un hueco real: si la monitora fotografía un fruto perforado pero solo escribe *"mosca blanca"*, el reporte no dispara alerta y el hallazgo se pierde. Con esta regla, la foto avisa igual. Para no duplicar avisos, si el reporte escrito **ya** generó alerta en ese lote, la foto no vuelve a notificar.
 

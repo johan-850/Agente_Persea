@@ -94,6 +94,26 @@ CASOS_FOTO = [
         False,
     ),
     (
+        "Perforaciones en HOJA son comedores de follaje, no barrenadores",
+        "Hoja de aguacate con multiples perforaciones circulares de bordes limpios y "
+        "oscurecidos, distribuidas en el limbo foliar. Se observa un insecto rojo-"
+        "amarillento sobre la vena central.",
+        ["Monalonion velezangeli", "Diabrotica balteata"],
+        False,
+    ),
+    (
+        "Larvas en HOJA tampoco alertan",
+        "Hoja con varias larvas verdes alimentandose del borde del limbo.",
+        [],
+        False,
+    ),
+    (
+        "Larvas dentro del fruto si alertan",
+        "Fruto abierto con una larva blanca en el interior de la pulpa.",
+        [],
+        True,
+    ),
+    (
         "Manchas foliares: son enfermedades comunes, no cuarentenarias",
         "Hoja con manchas pequenas de color cafe oscuro, de bordes irregulares y "
         "halo clorotico alrededor.",
