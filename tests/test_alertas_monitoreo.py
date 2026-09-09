@@ -71,28 +71,45 @@ CASOS_FOTO = [
         "Perforaciones en fruto: dano tipico de los barrenadores del plan",
         "Se observan frutos de aguacate Hass con multiples perforaciones pequenas y "
         "oscuras, acompanadas de exudaciones blanquecinas alrededor de las lesiones.",
+        [],
         True,
     ),
     (
         "Cera blanca de cochinilla",
         "Rama con presencia de insectos cubiertos de una secrecion cerosa blanca, "
         "con acumulacion de melaza en la superficie.",
+        [],
         True,
+    ),
+    (
+        "Candidata cuarentenaria aunque la descripcion no traiga patron",
+        "Rama con pequenos insectos inmoviles adheridos a la corteza.",
+        ["Ceroplastes rubens (escama cerosa roja)"],
+        True,
+    ),
+    (
+        "Candidata NO cuarentenaria no debe alertar",
+        "Hoja con puntos rojizos en el enves y telarana fina.",
+        ["Oligonychus yothersi (acaro cafe)"],
+        False,
     ),
     (
         "Manchas foliares: son enfermedades comunes, no cuarentenarias",
         "Hoja con manchas pequenas de color cafe oscuro, de bordes irregulares y "
         "halo clorotico alrededor.",
+        ["Pseudocercospora purpurea (mancha angular de la hoja)"],
         False,
     ),
     (
         "Foto sin cultivo",
         "Se observa una persona de pie en un camino de tierra, sin cultivo visible.",
+        [],
         False,
     ),
     (
-        "Sin descripcion disponible",
+        "Sin descripcion ni candidatas",
         None,
+        [],
         False,
     ),
 ]
@@ -113,8 +130,8 @@ def main() -> int:
 
     print()
     print("PATRONES DE DANO EN FOTOS")
-    for descripcion, texto, esperado in CASOS_FOTO:
-        motivo = evaluar_dano_en_foto(texto)
+    for descripcion, texto, sugeridas, esperado in CASOS_FOTO:
+        motivo = evaluar_dano_en_foto(texto, sugeridas)
         if bool(motivo) != esperado:
             fallos += 1
             print(f"  FALLA: {descripcion}")

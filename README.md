@@ -181,9 +181,16 @@ Los reportes casi siempre traen fotos de daños, larvas u hojas afectadas. El ag
 
 Se guardan en `2026/09/2026-09-03_la-linda_lote-5_a1b2c3d4.jpg`: agrupadas por mes y con finca y lote en el nombre, para poder ubicar una foto sin consultar la base de datos.
 
-**La descripción es apoyo, no diagnóstico.** El prompt pide describir lo observable (parte de la planta, tipo de daño, extensión) y **prohíbe explícitamente afirmar especies**. Un modelo de propósito general no distingue de forma confiable un picudo de otro ni una escama de otra a partir de una foto, y una decisión fitosanitaria basada en eso sería un error. La identificación la hace el agrónomo.
+**Observación e hipótesis van en campos separados.** El modelo devuelve dos cosas:
 
-**Pero la foto puede levantar la mano.** La descripción se compara contra los daños que el PLAN MIPE asocia a las plagas cuarentenarias — perforaciones, galerías, aserrín, exudaciones, larvas, cera y melaza. Si coincide, se genera una alerta de **prioridad media** redactada como algo a verificar, nunca como diagnóstico.
+| Campo | Qué es |
+|---|---|
+| `descripcion` | Lo observable: parte de la planta, tipo de daño, extensión. Es lo único que se afirma. |
+| `plagas_sugeridas` | Candidatas del catálogo del plan compatibles con ese daño. Son **hipótesis a confirmar**, y viven aparte de `plagas_observadas` (lo que reportó la monitora) para que nunca se mezclen al sacar estadísticas. |
+
+La separación no es formalismo. El propio plan distingue *Pseudococcus jackbeardsleyi* de *P. longispinus* contando pares de filamentos de cera — una es cuarentenaria y la otra no, y esa diferencia no sale de una foto de WhatsApp comprimida. La monitora, en cambio, está ahí: puede voltear el fruto, abrirlo y usar la lupa de 20x que el plan menciona. Por eso el modelo propone y el agrónomo confirma.
+
+**La foto puede levantar la mano.** Se genera alerta de **prioridad media** si la descripción coincide con los daños que el plan asocia a cuarentenarias (perforaciones, galerías, aserrín, exudaciones, larvas, cera, melaza) **o** si alguna candidata sugerida es cuarentenaria.
 
 Esto cubre un hueco real: si la monitora fotografía un fruto perforado pero solo escribe *"mosca blanca"*, el reporte no dispara alerta y el hallazgo se pierde. Con esta regla, la foto avisa igual. Para no duplicar avisos, si el reporte escrito **ya** generó alerta en ese lote, la foto no vuelve a notificar.
 
@@ -205,7 +212,7 @@ Definidas en `app/services/alertas_monitoreo_service.py` y evaluadas sobre el te
 | Accidente (`accidente`, `herido`, `lesión`…) | alta | — |
 | La palabra **`activo`** | alta | Es el marcador que el propio equipo usa para señalar un foco urgente (*"Un foco de escamas ACTIVO"*). |
 | Término de grupo sin especie (`escama`, `cochinilla`) | media | Puede ser cuarentenaria o no, y del texto no hay forma de saberlo. Se avisa para verificar en campo. |
-| Daño visible en una foto (perforaciones, galerías, aserrín, exudaciones, cera, melaza) | media | Se evalúa sobre la *descripción* de la imagen, no sobre el reporte escrito. Ver [Fotos](#fotos). |
+| Daño visible en una foto, o candidata cuarentenaria sugerida por la imagen | media | Se evalúa sobre lo que devuelve el análisis de la foto, no sobre el reporte escrito. Ver [Fotos](#fotos). |
 
 Las 8 plagas cuarentenarias del cultivo (aguacate Hass) son *Heilipus lauri*, *Heilipus elegans*, *Stenoma catenifer*, *Maconellicoccus hirsutus*, *Pseudococcus jackbeardsleyi*, *Pseudococcus landoi*, *Ceroplastes rubens* y *Saissetia batesi*. La comparación ignora mayúsculas y tildes, porque en campo se escribe indistintamente *ácaro*/*acaro* o *pseudocercóspora*/*pseudocercosphora*.
 

@@ -48,15 +48,26 @@ PATRONES_DANO_FOTO = [
 ]
 
 
-def evaluar_dano_en_foto(descripcion: str | None) -> str | None:
-    """Devuelve el motivo si la descripcion de una foto sugiere dano compatible
-    con plaga cuarentenaria, o None si no coincide con ningun patron.
-    """
-    if not descripcion:
-        return None
+def evaluar_dano_en_foto(
+    descripcion: str | None, plagas_sugeridas: list | None = None
+) -> str | None:
+    """Devuelve el motivo si una foto sugiere dano compatible con plaga
+    cuarentenaria, o None si no hay indicios.
 
-    texto = normalizar(descripcion)
-    motivos = [motivo for patron, motivo in PATRONES_DANO_FOTO if re.search(patron, texto)]
+    Se miran dos cosas: los patrones de dano en la descripcion, y si alguna de
+    las candidatas que propuso el modelo es cuarentenaria. Basta con una.
+    """
+    motivos = []
+
+    if descripcion:
+        texto = normalizar(descripcion)
+        motivos += [motivo for patron, motivo in PATRONES_DANO_FOTO if re.search(patron, texto)]
+
+    for sugerida in plagas_sugeridas or []:
+        nombre = normalizar(str(sugerida))
+        if any(plaga in nombre for plaga in PLAGAS_CUARENTENARIAS):
+            motivos.append(f"candidata cuarentenaria: {sugerida}")
+
     return ", ".join(motivos) if motivos else None
 
 

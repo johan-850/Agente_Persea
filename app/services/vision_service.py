@@ -1,10 +1,17 @@
 """Descripcion de las fotos que acompanan los reportes de monitoreo.
 
-La descripcion es contexto de apoyo del reporte escrito, NO un diagnostico.
-Un modelo de proposito general no distingue de forma confiable especies
-cercanas a partir de una foto (un picudo de otro, una escama de otra), y una
-decision fitosanitaria basada en eso seria un error. Por eso el prompt pide
-describir lo observable y prohibe afirmar especies.
+Devuelve dos cosas separadas a proposito:
+
+- descripcion: lo observable en la foto (parte de la planta, tipo de dano,
+  extension). Es lo unico que se afirma.
+- plagas_sugeridas: candidatas del catalogo del PLAN MIPE compatibles con ese
+  dano. Son HIPOTESIS, no identificaciones, y se guardan en un campo aparte
+  para que nunca se confundan con lo que reporto la monitora.
+
+La separacion importa porque el plan distingue especies por detalles que no
+salen de una foto de WhatsApp: Pseudococcus jackbeardsleyi se diferencia de
+P. longispinus contando pares de filamentos de cera, y una es cuarentenaria y
+la otra no. La confirmacion la hace el agronomo en campo.
 """
 
 import base64
@@ -12,6 +19,7 @@ import logging
 import os
 
 from app.services.ia_service import get_client
+from app.services.monitoreo_ia_service import CATALOGO_PLAGAS
 
 logger = logging.getLogger("vision")
 
@@ -23,24 +31,50 @@ MAX_BYTES = 4_500_000
 
 MIME_SOPORTADOS = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 
-PROMPT = """Estas viendo una foto tomada por una monitora de campo en un cultivo
+PROMPT = f"""Estas viendo una foto tomada por una monitora de campo en un cultivo
 de aguacate Hass, que acompana un reporte de monitoreo de plagas.
 
-Describe en 1 o 2 frases lo que se observa, en espanol y en terminos concretos:
-que parte de la planta aparece (hoja, rama, fruto, tallo, raiz, suelo), que tipo
-de dano o sintoma es visible (perforaciones, manchas, clorosis, defoliacion,
-exudaciones, presencia de insectos o larvas) y su extension aparente.
+Devuelve dos cosas:
 
-NO afirmes que especie de plaga es. Si se ve un insecto, describelo por su
-aspecto ("larva blanca de unos 2 cm", "insecto escamoso blanco") sin nombrarlo.
-La identificacion la hace el agronomo; tu descripcion es solo apoyo.
+1. descripcion: 1 o 2 frases en espanol sobre lo OBSERVABLE. Que parte de la
+   planta aparece (hoja, rama, fruto, tallo, raiz, suelo), que dano o sintoma
+   se ve (perforaciones, manchas, clorosis, defoliacion, exudaciones, aserrin,
+   presencia de insectos o larvas) y su extension aparente. Aqui NO nombres
+   plagas: describe lo que se ve, no lo que crees que lo causo.
+   Si la foto no muestra cultivo ni dano (una persona, un paisaje, un
+   documento), dilo en pocas palabras.
 
-Si la foto no muestra cultivo ni dano (una persona, un paisaje, un documento),
-dilo en pocas palabras."""
+2. plagas_sugeridas: lista de plagas o enfermedades del catalogo de abajo
+   COMPATIBLES con el dano visible. Son hipotesis para que el agronomo
+   verifique, no un diagnostico.
+   Reglas:
+   - Usa unicamente nombres del catalogo.
+   - Incluye una candidata solo si el dano visible corresponde de verdad al
+     que esa plaga produce.
+   - Si varias son compatibles, incluyelas todas: es preferible una lista
+     corta de candidatas a una identificacion unica y equivocada.
+   - Si no hay dano visible, o el dano no permite acotar candidatas, devuelve
+     la lista vacia. Una lista vacia es una respuesta valida y frecuente.
+
+CATALOGO DE PLAGAS Y ENFERMEDADES DEL CULTIVO
+{CATALOGO_PLAGAS}"""
+
+DESCRIPCION_TOOL = {
+    "name": "describir_foto",
+    "description": "Registra lo observado en una foto de monitoreo de campo.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "descripcion": {"type": "string"},
+            "plagas_sugeridas": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["descripcion", "plagas_sugeridas"],
+    },
+}
 
 
-def describir_foto(contenido: bytes, mime_type: str) -> str | None:
-    """Devuelve una descripcion breve, o None si no se puede procesar."""
+def describir_foto(contenido: bytes, mime_type: str) -> dict | None:
+    """Devuelve {descripcion, plagas_sugeridas}, o None si no se puede procesar."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         return None
 
@@ -54,7 +88,7 @@ def describir_foto(contenido: bytes, mime_type: str) -> str | None:
 
     respuesta = get_client().messages.create(
         model=MODEL,
-        max_tokens=300,
+        max_tokens=600,
         messages=[
             {
                 "role": "user",
@@ -71,8 +105,16 @@ def describir_foto(contenido: bytes, mime_type: str) -> str | None:
                 ],
             }
         ],
+        tools=[DESCRIPCION_TOOL],
+        tool_choice={"type": "tool", "name": "describir_foto"},
     )
 
-    partes = [bloque.text for bloque in respuesta.content if bloque.type == "text"]
-    texto = " ".join(partes).strip()
-    return texto or None
+    for bloque in respuesta.content:
+        if bloque.type == "tool_use":
+            datos = bloque.input
+            return {
+                "descripcion": (datos.get("descripcion") or "").strip() or None,
+                "plagas_sugeridas": datos.get("plagas_sugeridas") or [],
+            }
+
+    return None

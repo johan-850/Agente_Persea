@@ -65,6 +65,9 @@ create table if not exists fotos (
     monitoreo_id bigint references monitoreos (id) on delete set null,
     storage_path text,
     descripcion text,
+    -- Hipotesis del modelo sobre la foto. Aparte de plagas_observadas de la
+    -- tabla monitoreos, que es lo que reporto la monitora.
+    plagas_sugeridas jsonb not null default '[]',
     es_alerta boolean not null default false,
     motivo_alerta text
 );

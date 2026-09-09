@@ -88,8 +88,12 @@ def procesar_foto(media_id: str, remitente: str, caption: str | None = None) -> 
     monitoreo = _monitoreo_relacionado(remitente)
 
     descripcion = None
+    plagas_sugeridas = []
     try:
-        descripcion = vision_service.describir_foto(contenido, mime_type)
+        visto = vision_service.describir_foto(contenido, mime_type)
+        if visto:
+            descripcion = visto["descripcion"]
+            plagas_sugeridas = visto["plagas_sugeridas"]
     except Exception:
         logger.exception("No se pudo describir la foto %s", media_id)
 
@@ -101,7 +105,7 @@ def procesar_foto(media_id: str, remitente: str, caption: str | None = None) -> 
     except Exception:
         logger.exception("No se pudo archivar la foto %s", media_id)
 
-    motivo_alerta = evaluar_dano_en_foto(descripcion)
+    motivo_alerta = evaluar_dano_en_foto(descripcion, plagas_sugeridas)
 
     registro = {
         "remitente": remitente,
@@ -110,6 +114,9 @@ def procesar_foto(media_id: str, remitente: str, caption: str | None = None) -> 
         "monitoreo_id": monitoreo["id"] if monitoreo else None,
         "storage_path": storage_path,
         "descripcion": descripcion,
+        # Hipotesis del modelo, en campo aparte: nunca se mezclan con las
+        # plagas que reporto la monitora en el texto.
+        "plagas_sugeridas": plagas_sugeridas,
         "es_alerta": bool(motivo_alerta),
         "motivo_alerta": motivo_alerta,
     }
@@ -127,16 +134,25 @@ def procesar_foto(media_id: str, remitente: str, caption: str | None = None) -> 
 def _notificar_dano_en_foto(foto: dict, monitoreo: dict | None, motivo: str) -> None:
     """Avisa que una foto muestra dano compatible con plaga cuarentenaria.
 
-    Prioridad media y redactado como algo a verificar, no como diagnostico: la
-    descripcion viene de un modelo que tiene prohibido afirmar especies.
+    Prioridad media y redactado como algo a verificar. Las candidatas van con
+    "compatible con": son hipotesis del modelo sobre una foto, no una
+    identificacion, y el plan distingue varias de estas especies por detalles
+    que no salen de una imagen.
     """
+    finca = (monitoreo or {}).get("finca") or "no especificada"
+    lote = (monitoreo or {}).get("lote") or "no especificado"
     descripcion = foto.get("descripcion") or "sin descripcion"
+
+    sugeridas = foto.get("plagas_sugeridas") or []
+    candidatas = f" Compatible con: {', '.join(sugeridas)}." if sugeridas else ""
+
     respaldo = (
-        f"📷 Foto con posible dano de plaga cuarentenaria ({motivo})\n"
-        f"Finca: {(monitoreo or {}).get('finca') or 'no especificada'}\n"
-        f"Lote: {(monitoreo or {}).get('lote') or 'no especificado'}\n"
-        f"Descripcion: {descripcion}\n"
-        "Verificar en campo."
+        f"📷 Foto con posible daño de plaga cuarentenaria ({motivo})\n"
+        f"Finca: {finca}\n"
+        f"Lote: {lote}\n"
+        f"Descripción: {descripcion}\n"
+        f"{candidatas.strip()}\n"
+        "A confirmar en campo."
     )
 
     try:
@@ -144,10 +160,10 @@ def _notificar_dano_en_foto(foto: dict, monitoreo: dict | None, motivo: str) -> 
             meta_whatsapp_service.PLANTILLA_ALERTA,
             [
                 "media",
-                (monitoreo or {}).get("finca") or "no especificada",
-                (monitoreo or {}).get("lote") or "no especificado",
-                f"foto sugiere {motivo}: {descripcion}",
-                "posible dano de plaga cuarentenaria, verificar en campo",
+                finca,
+                lote,
+                f"{descripcion}{candidatas}",
+                "posible daño de plaga cuarentenaria en foto, a confirmar en campo",
                 foto.get("remitente") or "desconocido",
             ],
             respaldo=respaldo,
