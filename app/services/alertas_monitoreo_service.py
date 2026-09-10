@@ -10,6 +10,7 @@ Las plagas cuarentenarias tienen umbral de dano 0% segun el PLAN MIPE: basta
 su presencia, sin importar como se describa.
 """
 
+import logging
 import re
 import unicodedata
 
@@ -18,6 +19,8 @@ from app.services.alertas_service import (
     PALABRAS_ACCIDENTE,
     PLAGAS_CUARENTENARIAS,
 )
+
+logger = logging.getLogger("alertas_monitoreo")
 
 _PATRON_ACTIVO = re.compile(r"\bactivo[s]?\b", re.IGNORECASE)
 
@@ -76,25 +79,43 @@ def evaluar_dano_en_foto(
     """Devuelve el motivo si una foto sugiere dano compatible con plaga
     cuarentenaria, o None si no hay indicios.
 
-    Se miran dos cosas: los patrones de dano en la descripcion, y si alguna de
-    las candidatas que propuso el modelo es cuarentenaria. Basta con una.
-    """
-    motivos = []
+    Orden de decision:
 
+    1. Si alguna candidata propuesta es cuarentenaria, se alerta.
+    2. Si el modelo propuso candidatas y NINGUNA es cuarentenaria, no se
+       alerta. Miro la imagen completa y concluyo otra cosa; los patrones solo
+       leen su propia prosa, asi que su conclusion pesa mas.
+    3. Sin candidatas, los patrones de dano deciden. Son la red de seguridad
+       cuando el modelo no se pronuncia.
+    """
+    sugeridas = [str(s) for s in (plagas_sugeridas or [])]
+    cuarentenarias = [
+        s for s in sugeridas if any(p in normalizar(s) for p in PLAGAS_CUARENTENARIAS)
+    ]
+
+    motivos_patron = []
     if descripcion:
         texto = normalizar(descripcion)
-        motivos += [
+        motivos_patron = [
             motivo
             for patron, motivo, requiere_organo in PATRONES_DANO_FOTO
             if _hay_dano(texto, patron, requiere_organo)
         ]
 
-    for sugerida in plagas_sugeridas or []:
-        nombre = normalizar(str(sugerida))
-        if any(plaga in nombre for plaga in PLAGAS_CUARENTENARIAS):
-            motivos.append(f"candidata cuarentenaria: {sugerida}")
+    if cuarentenarias:
+        return ", ".join(motivos_patron + [f"candidata cuarentenaria: {s}" for s in cuarentenarias])
 
-    return ", ".join(motivos) if motivos else None
+    if sugeridas:
+        if motivos_patron:
+            logger.info(
+                "Patron de dano (%s) descartado: el modelo propuso candidatas no "
+                "cuarentenarias (%s)",
+                ", ".join(motivos_patron),
+                ", ".join(sugeridas),
+            )
+        return None
+
+    return ", ".join(motivos_patron) if motivos_patron else None
 
 
 def evaluar_alerta_monitoreo(texto: str) -> tuple[bool, str | None, str | None]:

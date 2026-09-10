@@ -114,6 +114,24 @@ CASOS_FOTO = [
         True,
     ),
     (
+        "Candidatas no cuarentenarias descartan el patron de dano",
+        "Fruto con perforaciones en la superficie.",
+        ["Diabrotica balteata"],
+        False,
+    ),
+    (
+        "Sin candidatas, el patron sigue valiendo como red de seguridad",
+        "Fruto con perforaciones en la superficie.",
+        [],
+        True,
+    ),
+    (
+        "Una candidata cuarentenaria manda, aunque haya otras que no lo son",
+        "Rama con pequenos insectos adheridos.",
+        ["Oligonychus yothersi (acaro cafe)", "Saissetia batesi (escama hemisferica)"],
+        True,
+    ),
+    (
         "Manchas foliares: son enfermedades comunes, no cuarentenarias",
         "Hoja con manchas pequenas de color cafe oscuro, de bordes irregulares y "
         "halo clorotico alrededor.",
