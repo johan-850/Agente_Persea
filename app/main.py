@@ -1,3 +1,4 @@
+import logging
 import os
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -5,6 +6,17 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 
 load_dotenv()
+
+# Uvicorn configura sus propios loggers y deja los nuestros sin handler, asi
+# que sin esto solo se veian los warnings. Se perdian justo las lineas que
+# sirven para auditar por que el agente decidio algo: el reenvio que se
+# descarto, el mensaje que no era un reporte, el patron de dano que se
+# descarto porque el modelo propuso candidatas no cuarentenarias.
+logging.basicConfig(
+    level=os.environ.get("NIVEL_LOG", "INFO"),
+    format="%(asctime)s %(levelname)-8s %(name)s | %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 from app.api.routes_meta_whatsapp import router as meta_whatsapp_router  # noqa: E402
 from app.api.routes_monitoreo import router as monitoreo_router  # noqa: E402
