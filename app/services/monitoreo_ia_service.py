@@ -1,5 +1,7 @@
 import logging
 import os
+import re
+import unicodedata
 
 from app.services.ia_service import get_client
 
@@ -17,6 +19,17 @@ TIPOS_LABOR_MONITOREO = [
 ]
 
 PLACEHOLDERS_INVALIDOS = {"<unknown>", "unknown", "n/a", "na", "no especificado", "no aplica", ""}
+
+# Las cuatro fincas de Agricola Persea, con las formas en que aparecen escritas
+# en los reportes. Sin normalizar, una sola finca entraba como "Rivera",
+# "rivera", "La Rivera", "la rivera" y "Ribera": no se puede agrupar por finca,
+# filtrar su historial ni contar cuantos lotes lleva el dia.
+FINCAS = {
+    "la linda": ("la linda", "linda"),
+    "alfa": ("alfa", "alpha"),
+    "buena vista": ("buena vista", "buenavista", "buena-vista"),
+    "rivera": ("rivera", "la rivera", "ribera", "la ribera"),
+}
 
 # Catalogo del PLAN MIPE de Agricola Persea (aguacate Hass). Sirve para que el
 # modelo normalice los nombres que las monitoras escriben de formas muy
@@ -79,7 +92,10 @@ IMPORTANTE: un solo mensaje puede reportar sobre VARIOS lotes distintos (ej.
 Debes devolver un elemento en "reportes" por CADA lote mencionado.
 
 Para cada lote extrae:
-- finca: nombre de la finca mencionada (ej. "la linda", "rivera", "alfa").
+- finca: una de estas cuatro, en minuscula y tal como aparecen aqui:
+  {", ".join(FINCAS)}. Las monitoras las escriben de muchas formas
+  ("La Rivera", "Ribera", "buenavista"): devuelve siempre la forma canonica.
+  Si nombran una finca que no esta en la lista, escribela tal cual.
   Si el mensaje no la menciona pero es claramente continuacion del mismo
   reporte, puedes dejarla null.
 - lote: SOLO el numero o identificador (ej. "14"), sin el simbolo # ni la
@@ -97,15 +113,30 @@ Para cada lote extrae:
   "mosca blanca - alta poblacion"). Preserva la palabra "ACTIVO" en mayuscula
   si el texto la usa asi, es una senal importante. No inventes plagas que no
   esten en el texto.
-  Usa el catalogo de abajo para normalizar nombres mal escritos o abreviados
-  ("pseudocercosphora" -> "pseudocercospora", "cefaleurus" -> "cephaleuros"),
-  pero conserva siempre el descriptor de severidad que puso la monitora.
+  Usa el catalogo de abajo para corregir la ESCRITURA de un nombre que ya
+  corresponde a una entrada del catalogo ("pseudocercosphora" ->
+  "pseudocercospora", "cefaleurus" -> "cephaleuros", "laury" -> "lauri"), y
+  conserva siempre el descriptor de severidad que puso la monitora.
+  NUNCA cambies una especie por otra. Si la monitora nombra algo que no esta
+  en el catalogo —"heilipus leopardo", "tetraleurodes", "marceño"— dejalo tal
+  como lo escribio; no lo sustituyas por la entrada mas parecida. Confundir
+  Heilipus leopardo con Heilipus lauri manda al agronomo a buscar la plaga
+  equivocada.
+  Si un hallazgo es de una especie y otro de otra, van en elementos
+  separados, cada uno con lo que el texto dice de ESA especie.
 - nota: contexto adicional relevante que no encaje en los campos anteriores
   (interrupciones por clima, transiciones entre lotes, conteos especificos
   como numero de larvas encontradas, etc). Puede ser null.
-- es_alerta: true si en ESE lote se detecta una plaga cuarentenaria, un foco
-  marcado como "ACTIVO", o algo grave (accidente, herido). false en caso
-  contrario.
+- es_alerta: true SOLO por una de estas tres razones, y ninguna otra:
+    (a) una de las ocho plagas CUARENTENARIAS del catalogo aparece en ESE lote,
+    (b) el reporte marca un foco como "ACTIVO" en ESE lote,
+    (c) hay un accidente o una persona herida.
+  Una poblacion alta, una severidad 4 o mucho daño NO son alerta si la plaga
+  no es cuarentenaria: son hallazgos rutinarios que van al resumen diario.
+  Copturomimus perseae, acaro, mosca blanca, trips, monalonion, bruggmanniella
+  y las enfermedades del catalogo NO disparan alerta por numerosos que sean.
+  Si dudas, pon false: la alerta interrumpe a un administrador y de tanto
+  interrumpir deja de leerlas.
 - tipo_alerta y prioridad (alta/media/baja): solo si es_alerta es true.
 
 Si un campo no aplica, usa null (o lista vacia si aplica). NUNCA escribas
@@ -171,11 +202,34 @@ REPORTE_MONITOREO_TOOL = {
 _CAMPOS_TEXTO = ("finca", "lote", "tipo_labor", "nota", "tipo_alerta", "prioridad")
 
 
+def _normalizar_finca(valor) -> str | None:
+    """Lleva el nombre de la finca a una de las cuatro formas canonicas.
+
+    Si no reconoce el nombre lo deja como vino: puede ser una finca nueva o un
+    predio arrendado, y perder el dato seria peor que tenerlo sin normalizar.
+    """
+    if not isinstance(valor, str) or not valor.strip():
+        return None
+
+    plano = unicodedata.normalize("NFD", valor.strip().lower())
+    plano = "".join(c for c in plano if unicodedata.category(c) != "Mn")
+    plano = re.sub(r"\s+", " ", plano.replace("finca", "").strip())
+
+    for canonica, variantes in FINCAS.items():
+        if plano in variantes:
+            return canonica
+
+    logger.info("Finca no reconocida, se guarda tal cual: %r", valor)
+    return valor.strip()
+
+
 def _normalizar(item: dict) -> dict:
     for campo in _CAMPOS_TEXTO:
         valor = item.get(campo)
         if isinstance(valor, str) and valor.strip().lower() in PLACEHOLDERS_INVALIDOS:
             item[campo] = None
+
+    item["finca"] = _normalizar_finca(item.get("finca"))
 
     lote = item.get("lote")
     if isinstance(lote, str):

@@ -78,12 +78,50 @@ CASOS = [
 ]
 
 
+# El modelo tambien decide es_alerta por su cuenta, ademas de las reglas duras.
+# Aqui se comprueba que use el mismo criterio: solo cuarentenaria, foco ACTIVO
+# o accidente. Una poblacion alta de algo que no es cuarentenario no alerta.
+#
+# (descripcion, mensaje, se_espera_alerta)
+CASOS_ALERTA = [
+    (
+        "Copturomimus no es cuarentenaria por numeroso que sea",
+        "Buenas tardes finca la linda, bordeo lote #9, se observa sphaceloma, suelda, "
+        "pseudocercospora, mucho daño por comedores de follaje, daño por trips, "
+        "platinota, y copturomimus perseae con 11 adultos, 10 larvas y 1 pupa. "
+        "1 monitora",
+        False,
+    ),
+    (
+        "Acaro en severidad 4 tampoco: es rutina, va al resumen",
+        "Buenas tardes finca buena vista, monitoreo específico lote #4, se evidencia "
+        "alta población de acaro severidad de 3 a 4 en todos sus estados, "
+        "bruggmaniella, mosca blanca. Se finaliza lote. 1 monitora",
+        False,
+    ),
+    (
+        "Stenoma si, es una de las ocho cuarentenarias",
+        "Finca la linda, monitoreo general lote #3, se observa stenoma con daños "
+        "viejos en rama sin presencia de larva. 1 monitora",
+        True,
+    ),
+    (
+        "Un foco marcado ACTIVO si, aunque la plaga no sea cuarentenaria",
+        "Finca alfa, monitoreo general lote #5, se observa mosca blanca y un foco de "
+        "acaro ACTIVO. Se finaliza lote. 1 monitora",
+        True,
+    ),
+]
+
+
 def main() -> int:
     if not os.environ.get("ANTHROPIC_API_KEY"):
         print("Falta ANTHROPIC_API_KEY: esta prueba necesita llamar al modelo.")
         return 1
 
     fallos = 0
+
+    print("REPORTE DE CAMPO vs CONVERSACION")
     for descripcion, mensaje, espera_reporte in CASOS:
         reportes = extraer_reportes_monitoreo(mensaje)
         hubo_reporte = bool(reportes)
@@ -98,10 +136,25 @@ def main() -> int:
             print(f"  ok: {descripcion} -> {estado}")
 
     print()
+    print("CRITERIO DE ALERTA DEL MODELO")
+    for descripcion, mensaje, espera_alerta in CASOS_ALERTA:
+        reportes = extraer_reportes_monitoreo(mensaje)
+        hubo_alerta = any(r.get("es_alerta") for r in reportes)
+        if hubo_alerta != espera_alerta:
+            fallos += 1
+            print(f"  FALLA: {descripcion}")
+            print(f"    esperado alerta={espera_alerta}, obtenido {hubo_alerta}")
+            for r in reportes:
+                print(f"      tipo={r.get('tipo_alerta')!r} plagas={r.get('plagas_observadas')}")
+        else:
+            print(f"  ok: {descripcion} -> {'alerta' if hubo_alerta else 'sin alerta'}")
+
+    total = len(CASOS) + len(CASOS_ALERTA)
+    print()
     if fallos:
-        print(f"{fallos} de {len(CASOS)} casos fallaron")
+        print(f"{fallos} de {total} casos fallaron")
         return 1
-    print(f"{len(CASOS)} casos OK")
+    print(f"{total} casos OK")
     return 0
 
 
