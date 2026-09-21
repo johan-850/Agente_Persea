@@ -61,17 +61,35 @@ CASOS = [
         "se reporta accidente en el lote 5, un trabajador herido",
         True,
     ),
+    # Los dos lotes de un mismo mensaje del 21/09/2026. Antes la regla corria
+    # sobre el mensaje completo y el lote 10 salia marcado como cuarentenaria
+    # por culpa del stenoma del lote 3. Ahora se evalua lo de cada lote.
+    (
+        "Hallazgos del lote 10, sin nada cuarentenario: no debe alertar",
+        "ácaro - severidad 1-2-3 mosca blanca - baja thrips - severidad 1-2-3 "
+        "pseudocercospora en hoja cephaleuros árboles cloróticos",
+        False,
+    ),
+    (
+        "Hallazgos del lote 3 del mismo mensaje: ese si alerta",
+        "stenoma - daños viejos en rama sin presencia de larva",
+        True,
+    ),
 ]
 
 
-# Descripciones de fotos. La descripcion la produce el modelo de vision, que
-# tiene prohibido nombrar especies, asi que aqui solo se buscan danos visibles.
+# Fotos. Lo que decide es danos_observados: la lista cerrada que reporta el
+# modelo de vision, no la prosa de la descripcion. La descripcion se conserva
+# solo para que un humano pueda revisar.
+#
+# (descripcion, plagas_sugeridas, danos_observados, se_espera_alerta)
 CASOS_FOTO = [
     (
         "Perforaciones en fruto: dano tipico de los barrenadores del plan",
         "Se observan frutos de aguacate Hass con multiples perforaciones pequenas y "
         "oscuras, acompanadas de exudaciones blanquecinas alrededor de las lesiones.",
         [],
+        ["perforacion_en_fruto_rama_o_tallo", "exudacion_o_gomosis"],
         True,
     ),
     (
@@ -79,31 +97,28 @@ CASOS_FOTO = [
         "Rama con presencia de insectos cubiertos de una secrecion cerosa blanca, "
         "con acumulacion de melaza en la superficie.",
         [],
+        ["secrecion_cerosa_o_algodonosa", "melaza_o_fumagina"],
         True,
     ),
     (
-        "Candidata cuarentenaria aunque la descripcion no traiga patron",
+        "Candidata cuarentenaria aunque no se reporte dano visible",
         "Rama con pequenos insectos inmoviles adheridos a la corteza.",
         ["Ceroplastes rubens (escama cerosa roja)"],
+        [],
         True,
     ),
     (
         "Candidata NO cuarentenaria no debe alertar",
         "Hoja con puntos rojizos en el enves y telarana fina.",
         ["Oligonychus yothersi (acaro cafe)"],
+        [],
         False,
     ),
     (
-        "Perforaciones en HOJA son comedores de follaje, no barrenadores",
+        "Perforaciones en HOJA: el modelo no las reporta, son comedores de follaje",
         "Hoja de aguacate con multiples perforaciones circulares de bordes limpios y "
-        "oscurecidos, distribuidas en el limbo foliar. Se observa un insecto rojo-"
-        "amarillento sobre la vena central.",
+        "oscurecidos, distribuidas en el limbo foliar.",
         ["Monalonion velezangeli", "Diabrotica balteata"],
-        False,
-    ),
-    (
-        "Larvas en HOJA tampoco alertan",
-        "Hoja con varias larvas verdes alimentandose del borde del limbo.",
         [],
         False,
     ),
@@ -111,24 +126,28 @@ CASOS_FOTO = [
         "Larvas dentro del fruto si alertan",
         "Fruto abierto con una larva blanca en el interior de la pulpa.",
         [],
+        ["larva_en_fruto_rama_o_tallo"],
         True,
     ),
     (
-        "Candidatas no cuarentenarias descartan el patron de dano",
+        "Candidatas no cuarentenarias descartan el dano observado",
         "Fruto con perforaciones en la superficie.",
         ["Diabrotica balteata"],
+        ["perforacion_en_fruto_rama_o_tallo"],
         False,
     ),
     (
-        "Sin candidatas, el patron sigue valiendo como red de seguridad",
+        "Sin candidatas, el dano observado alerta por si solo",
         "Fruto con perforaciones en la superficie.",
         [],
+        ["perforacion_en_fruto_rama_o_tallo"],
         True,
     ),
     (
         "Una candidata cuarentenaria manda, aunque haya otras que no lo son",
         "Rama con pequenos insectos adheridos.",
         ["Oligonychus yothersi (acaro cafe)", "Saissetia batesi (escama hemisferica)"],
+        [],
         True,
     ),
     (
@@ -136,17 +155,43 @@ CASOS_FOTO = [
         "Hoja con manchas pequenas de color cafe oscuro, de bordes irregulares y "
         "halo clorotico alrededor.",
         ["Pseudocercospora purpurea (mancha angular de la hoja)"],
+        [],
+        False,
+    ),
+    # Los dos casos que dispararon alertas sobre plantas sanas el 21/09/2026.
+    # La descripcion NIEGA el dano y aun asi se alertaba, porque se buscaban
+    # las palabras en la prosa.
+    (
+        "Descripcion que NIEGA perforaciones y exudaciones no debe alertar",
+        "Se observan ramas y hojas del arbol de aguacate Hass en buen estado general, "
+        "con follaje verde y sin sintomas evidentes de dano. Las hojas presentan "
+        "coloracion normal y las ramas muestran estructura integra sin perforaciones, "
+        "manchas, defoliaciones o exudaciones aparentes.",
+        [],
+        [],
+        False,
+    ),
+    (
+        "Cultivo sano descrito enumerando lo que NO tiene",
+        "Cultivo de aguacate Hass en zona montanosa con buen desarrollo vegetativo. "
+        "Se observan plantas con follaje verde y denso, sin sintomas evidentes de "
+        "dano, defoliacion, manchas, perforaciones o presencia visible de plagas en "
+        "hojas, ramas o tallos.",
+        [],
+        [],
         False,
     ),
     (
         "Foto sin cultivo",
         "Se observa una persona de pie en un camino de tierra, sin cultivo visible.",
         [],
+        [],
         False,
     ),
     (
-        "Sin descripcion ni candidatas",
+        "Sin descripcion, sin candidatas ni danos",
         None,
+        [],
         [],
         False,
     ),
@@ -167,9 +212,9 @@ def main() -> int:
             print(f"  ok: {descripcion} -> {tipo or 'sin alerta'}")
 
     print()
-    print("PATRONES DE DANO EN FOTOS")
-    for descripcion, texto, sugeridas, esperado in CASOS_FOTO:
-        motivo = evaluar_dano_en_foto(texto, sugeridas)
+    print("DANO VISIBLE EN FOTOS")
+    for descripcion, texto, sugeridas, danos, esperado in CASOS_FOTO:
+        motivo = evaluar_dano_en_foto(texto, sugeridas, danos)
         if bool(motivo) != esperado:
             fallos += 1
             print(f"  FALLA: {descripcion}")

@@ -33,48 +33,38 @@ def normalizar(texto: str) -> str:
     return "".join(c for c in descompuesto if unicodedata.category(c) != "Mn")
 
 
-# Organos que atacan los barrenadores cuarentenarios segun el PLAN MIPE:
-# Heilipus lauri el fruto, Stenoma catenifer fruto y ramas delgadas, Heilipus
-# elegans tallo y ramas. Una perforacion o galeria en HOJA es otra cosa
-# (comedores de follaje, minadores) y no debe alertar.
-_ORGANOS_BARRENADOR = r"fruto|rama|tallo|corteza|semilla|peduncul|tronco"
-
-# Ventana de caracteres alrededor del dano donde se busca el organo. Cubre una
-# frase tipica sin cruzar a la siguiente.
-_CERCANIA = 90
-
-# Danos visibles que el plan asocia a las plagas cuarentenarias. La tercera
-# columna indica si el dano solo cuenta cuando aparece sobre uno de los organos
-# de arriba.
+# Danos visibles que el PLAN MIPE asocia a las plagas cuarentenarias. El modelo
+# de vision los reporta como lista cerrada (ver vision_service.DANOS_VISIBLES).
 #
-# Se comparan contra la DESCRIPCION de la foto, no contra el reporte escrito.
-# No identifican especie: solo indican que vale la pena que alguien mire el
-# lote, por eso la alerta que generan es de prioridad media.
-PATRONES_DANO_FOTO = [
-    (r"perforacion|perforad", "perforaciones", True),
-    (r"galeria", "galerias", True),
-    (r"larva", "larvas visibles", True),
-    (r"aserrin", "aserrin de larva", False),
-    (r"exudacion|exudad|gomosis", "exudaciones", False),
-    (r"cera blanca|ceros[oa]|algodonos", "secrecion cerosa", False),
-    (r"melaza|fumagina", "melaza o fumagina", False),
-]
-
-
-def _hay_dano(texto: str, patron: str, requiere_organo: bool) -> bool:
-    if not requiere_organo:
-        return bool(re.search(patron, texto))
-
-    for coincidencia in re.finditer(patron, texto):
-        inicio = max(0, coincidencia.start() - _CERCANIA)
-        ventana = texto[inicio : coincidencia.end() + _CERCANIA]
-        if re.search(_ORGANOS_BARRENADOR, ventana):
-            return True
-    return False
+# Antes se buscaban con expresiones regulares sobre la prosa de la descripcion,
+# y eso alertaba al reves de lo que decia la foto: una descripcion que terminaba
+# en "las ramas muestran estructura integra SIN perforaciones ni exudaciones"
+# disparaba alerta por "perforaciones" y "exudaciones", porque las palabras
+# estaban ahi aunque fueran negadas. Dos de las alertas de un mismo dia fueron
+# plantas explicitamente sanas.
+#
+# Quien miro la imagen es el modelo; que diga el que vio el dano y no una
+# expresion regular leyendo su redaccion.
+#
+# La distincion de organo sigue importando y ahora viaja en el propio nombre del
+# dano: Heilipus lauri ataca el fruto, Stenoma catenifer fruto y ramas delgadas,
+# Heilipus elegans tallo y ramas. Una perforacion en HOJA es otra cosa
+# (comedores de follaje, minadores) y no debe alertar.
+DANOS_RELEVANTES = {
+    "perforacion_en_fruto_rama_o_tallo": "perforaciones en fruto, rama o tallo",
+    "galeria_en_fruto_rama_o_tallo": "galerias en fruto, rama o tallo",
+    "larva_en_fruto_rama_o_tallo": "larvas en fruto, rama o tallo",
+    "aserrin": "aserrin de larva",
+    "exudacion_o_gomosis": "exudaciones o gomosis",
+    "secrecion_cerosa_o_algodonosa": "secrecion cerosa o algodonosa",
+    "melaza_o_fumagina": "melaza o fumagina",
+}
 
 
 def evaluar_dano_en_foto(
-    descripcion: str | None, plagas_sugeridas: list | None = None
+    descripcion: str | None,
+    plagas_sugeridas: list | None = None,
+    danos_observados: list | None = None,
 ) -> str | None:
     """Devuelve el motivo si una foto sugiere dano compatible con plaga
     cuarentenaria, o None si no hay indicios.
@@ -83,39 +73,45 @@ def evaluar_dano_en_foto(
 
     1. Si alguna candidata propuesta es cuarentenaria, se alerta.
     2. Si el modelo propuso candidatas y NINGUNA es cuarentenaria, no se
-       alerta. Miro la imagen completa y concluyo otra cosa; los patrones solo
-       leen su propia prosa, asi que su conclusion pesa mas.
-    3. Sin candidatas, los patrones de dano deciden. Son la red de seguridad
-       cuando el modelo no se pronuncia.
+       alerta: miro la imagen completa y concluyo otra cosa.
+    3. Sin candidatas, deciden los danos que el modelo reporto haber visto.
+
+    `descripcion` ya no participa en la decision: se conserva en el registro
+    para que un humano pueda revisar, pero no se le buscan patrones.
     """
     sugeridas = [str(s) for s in (plagas_sugeridas or [])]
     cuarentenarias = [
         s for s in sugeridas if any(p in normalizar(s) for p in PLAGAS_CUARENTENARIAS)
     ]
 
-    motivos_patron = []
-    if descripcion:
-        texto = normalizar(descripcion)
-        motivos_patron = [
-            motivo
-            for patron, motivo, requiere_organo in PATRONES_DANO_FOTO
-            if _hay_dano(texto, patron, requiere_organo)
-        ]
+    motivos = [
+        DANOS_RELEVANTES[d] for d in (danos_observados or []) if d in DANOS_RELEVANTES
+    ]
 
     if cuarentenarias:
-        return ", ".join(motivos_patron + [f"candidata cuarentenaria: {s}" for s in cuarentenarias])
+        return ", ".join(motivos + [f"candidata cuarentenaria: {s}" for s in cuarentenarias])
 
     if sugeridas:
-        if motivos_patron:
+        if motivos:
             logger.info(
-                "Patron de dano (%s) descartado: el modelo propuso candidatas no "
+                "Dano visible (%s) descartado: el modelo propuso candidatas no "
                 "cuarentenarias (%s)",
-                ", ".join(motivos_patron),
+                ", ".join(motivos),
                 ", ".join(sugeridas),
             )
         return None
 
-    return ", ".join(motivos_patron) if motivos_patron else None
+    return ", ".join(motivos) if motivos else None
+
+
+def hallazgos_que_alertan(plagas: list | None) -> list:
+    """Cuales de los hallazgos del lote son los que disparan la alerta.
+
+    Sirve para encabezar el aviso con lo que importa: un reporte de bordeo
+    trae quince hallazgos rutinarios y el stenoma quedaba sepultado en el
+    medio, o directamente cortado por el limite de caracteres.
+    """
+    return [p for p in (plagas or []) if evaluar_alerta_monitoreo(str(p))[0]]
 
 
 def evaluar_alerta_monitoreo(texto: str) -> tuple[bool, str | None, str | None]:

@@ -31,10 +31,24 @@ MAX_BYTES = 4_500_000
 
 MIME_SOPORTADOS = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 
+# Lista cerrada de danos. Es la senal que decide si se alerta, asi que la
+# reporta quien vio la imagen. El organo va dentro del nombre porque una
+# perforacion en hoja es un comedor de follaje y una en fruto o rama puede ser
+# un barrenador cuarentenario.
+DANOS_VISIBLES = [
+    "perforacion_en_fruto_rama_o_tallo",
+    "galeria_en_fruto_rama_o_tallo",
+    "larva_en_fruto_rama_o_tallo",
+    "aserrin",
+    "exudacion_o_gomosis",
+    "secrecion_cerosa_o_algodonosa",
+    "melaza_o_fumagina",
+]
+
 PROMPT = f"""Estas viendo una foto tomada por una monitora de campo en un cultivo
 de aguacate Hass, que acompana un reporte de monitoreo de plagas.
 
-Devuelve dos cosas:
+Devuelve tres cosas:
 
 1. descripcion: 1 o 2 frases en espanol sobre lo OBSERVABLE. Que parte de la
    planta aparece (hoja, rama, fruto, tallo, raiz, suelo), que dano o sintoma
@@ -44,7 +58,19 @@ Devuelve dos cosas:
    Si la foto no muestra cultivo ni dano (una persona, un paisaje, un
    documento), dilo en pocas palabras.
 
-2. plagas_sugeridas: lista de plagas o enfermedades del catalogo de abajo
+2. danos_observados: lista de los danos de esta lista cerrada que se VEN en la
+   foto: {", ".join(DANOS_VISIBLES)}.
+   Reglas:
+   - Incluye un dano solo si realmente se ve en la imagen. Si la planta se ve
+     sana, devuelve la lista vacia.
+   - NO incluyas un dano porque lo estes descartando. Si escribes "sin
+     perforaciones" en la descripcion, la lista NO lleva perforacion.
+   - Los tres primeros valen solo sobre fruto, rama, tallo, corteza, semilla,
+     pedunculo o tronco. Una perforacion o una larva sobre HOJA no se reporta:
+     es dano de comedores de follaje, no de barrenador.
+   - La lista vacia es una respuesta valida y frecuente.
+
+3. plagas_sugeridas: lista de plagas o enfermedades del catalogo de abajo
    COMPATIBLES con el dano visible. Son hipotesis para que el agronomo
    verifique, no un diagnostico.
    Reglas:
@@ -66,15 +92,24 @@ DESCRIPCION_TOOL = {
         "type": "object",
         "properties": {
             "descripcion": {"type": "string"},
+            "danos_observados": {
+                "type": "array",
+                "items": {"type": "string", "enum": DANOS_VISIBLES},
+                "description": (
+                    "Danos que se ven en la foto. Vacia si la planta se ve sana. "
+                    "Nunca incluye un dano que la descripcion este negando."
+                ),
+            },
             "plagas_sugeridas": {"type": "array", "items": {"type": "string"}},
         },
-        "required": ["descripcion", "plagas_sugeridas"],
+        "required": ["descripcion", "danos_observados", "plagas_sugeridas"],
     },
 }
 
 
 def describir_foto(contenido: bytes, mime_type: str) -> dict | None:
-    """Devuelve {descripcion, plagas_sugeridas}, o None si no se puede procesar."""
+    """Devuelve {descripcion, danos_observados, plagas_sugeridas}, o None si no
+    se puede procesar."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         return None
 
@@ -118,6 +153,9 @@ def describir_foto(contenido: bytes, mime_type: str) -> dict | None:
             datos = bloque.input
             return {
                 "descripcion": (datos.get("descripcion") or "").strip() or None,
+                "danos_observados": [
+                    d for d in (datos.get("danos_observados") or []) if d in DANOS_VISIBLES
+                ],
                 "plagas_sugeridas": datos.get("plagas_sugeridas") or [],
             }
 

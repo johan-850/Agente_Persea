@@ -13,6 +13,11 @@ from app.services.monitoreo_service import procesar_mensaje_monitoreo
 
 router = APIRouter()
 
+# La WABA a la que pertenece el numero no se puede consultar con los permisos
+# del token, pero viene en cada evento. Se registra una vez por arranque: hace
+# falta para crear plantillas en la cuenta correcta.
+_wabas_vistas: set[str] = set()
+
 
 def _procesar_mensaje(mensaje: dict) -> None:
     numero = mensaje.get("from")
@@ -62,6 +67,11 @@ async def recibir_mensaje_meta(request: Request):
     payload = await request.json()
 
     for entry in payload.get("entry", []):
+        waba_id = entry.get("id")
+        if waba_id and waba_id not in _wabas_vistas:
+            _wabas_vistas.add(waba_id)
+            logger.info("Eventos recibidos de la WABA %s", waba_id)
+
         for change in entry.get("changes", []):
             valor = change.get("value", {})
             for estado in valor.get("statuses", []):

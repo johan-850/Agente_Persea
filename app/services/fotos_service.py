@@ -9,13 +9,20 @@ from datetime import datetime, timedelta, timezone
 
 from app.db.supabase_client import get_client
 from app.services import meta_whatsapp_service, storage_service, vision_service
-from app.services.alertas_monitoreo_service import evaluar_dano_en_foto
+from app.services.alertas_monitoreo_service import DANOS_RELEVANTES, evaluar_dano_en_foto
 
 logger = logging.getLogger("fotos")
 
 # Las monitoras mandan la foto en un mensaje aparte del texto, casi siempre
 # seguido. Se busca el ultimo reporte de esa misma persona en esta ventana.
 VENTANA_ASOCIACION = timedelta(hours=2)
+
+# Una monitora manda varias fotos seguidas del mismo lote. Avisar por cada una
+# convierte un hallazgo en cinco mensajes seguidos y el administrador deja de
+# leerlos: un lote llego a disparar tres avisos en cuatro minutos. Dentro de
+# esta ventana se avisa una vez y las demas fotos quedan registradas en la
+# base, donde se pueden consultar todas juntas.
+VENTANA_AVISO_REPETIDO = timedelta(minutes=30)
 
 EXTENSIONES = {
     "image/jpeg": "jpg",
@@ -59,6 +66,28 @@ def _monitoreo_relacionado(remitente: str) -> dict | None:
     return filas[0] if filas else None
 
 
+def _ya_hubo_aviso_reciente(monitoreo: dict | None, remitente: str) -> bool:
+    """Si ya se aviso por otra foto de la misma visita, no se repite.
+
+    Se consulta ANTES de insertar la foto actual, para que no se encuentre a
+    si misma.
+    """
+    desde = (datetime.now(timezone.utc) - VENTANA_AVISO_REPETIDO).isoformat()
+    consulta = (
+        get_client()
+        .table("fotos")
+        .select("id")
+        .eq("es_alerta", True)
+        .gte("fecha_hora", desde)
+    )
+    if monitoreo:
+        consulta = consulta.eq("monitoreo_id", monitoreo["id"])
+    else:
+        consulta = consulta.eq("remitente", remitente).is_("monitoreo_id", "null")
+
+    return bool(consulta.limit(1).execute().data)
+
+
 def _ruta_archivo(monitoreo: dict | None, media_id: str, mime_type: str) -> str:
     """Ruta dentro del bucket, agrupada por mes y con finca y lote en el nombre
     para poder ubicar una foto sin consultar la base.
@@ -89,11 +118,13 @@ def procesar_foto(media_id: str, remitente: str, caption: str | None = None) -> 
 
     descripcion = None
     plagas_sugeridas = []
+    danos_observados = []
     try:
         visto = vision_service.describir_foto(contenido, mime_type)
         if visto:
             descripcion = visto["descripcion"]
             plagas_sugeridas = visto["plagas_sugeridas"]
+            danos_observados = visto["danos_observados"]
     except Exception:
         logger.exception("No se pudo describir la foto %s", media_id)
 
@@ -105,7 +136,10 @@ def procesar_foto(media_id: str, remitente: str, caption: str | None = None) -> 
     except Exception:
         logger.exception("No se pudo archivar la foto %s", media_id)
 
-    motivo_alerta = evaluar_dano_en_foto(descripcion, plagas_sugeridas)
+    motivo_alerta = evaluar_dano_en_foto(descripcion, plagas_sugeridas, danos_observados)
+
+    # Se consulta antes del insert para que la foto actual no cuente.
+    hubo_aviso_reciente = _ya_hubo_aviso_reciente(monitoreo, remitente) if motivo_alerta else False
 
     registro = {
         "remitente": remitente,
@@ -123,35 +157,59 @@ def procesar_foto(media_id: str, remitente: str, caption: str | None = None) -> 
 
     guardada = get_client().table("fotos").insert(registro).execute().data[0]
 
-    # Si el reporte escrito ya genero alerta, el administrador ya fue avisado
-    # de ese lote y repetir seria ruido.
-    if motivo_alerta and not (monitoreo and monitoreo.get("es_alerta")):
-        _notificar_dano_en_foto(guardada, monitoreo, motivo_alerta)
+    if motivo_alerta:
+        # Si el reporte escrito ya genero alerta, el administrador ya fue
+        # avisado de ese lote y repetir seria ruido.
+        if monitoreo and monitoreo.get("es_alerta"):
+            logger.info(
+                "Foto %s con dano, sin aviso: el lote ya alerto por el reporte escrito",
+                guardada.get("id"),
+            )
+        elif hubo_aviso_reciente:
+            logger.info(
+                "Foto %s con dano, sin aviso: ya se aviso por otra foto de esta visita",
+                guardada.get("id"),
+            )
+        else:
+            _notificar_dano_en_foto(guardada, monitoreo, motivo_alerta, danos_observados)
 
     return guardada
 
 
-def _notificar_dano_en_foto(foto: dict, monitoreo: dict | None, motivo: str) -> None:
+def _notificar_dano_en_foto(
+    foto: dict, monitoreo: dict | None, motivo: str, danos: list | None = None
+) -> None:
     """Avisa que una foto muestra dano compatible con plaga cuarentenaria.
 
     Prioridad media y redactado como algo a verificar. Las candidatas van con
     "compatible con": son hipotesis del modelo sobre una foto, no una
     identificacion, y el plan distingue varias de estas especies por detalles
     que no salen de una imagen.
+
+    El hallazgo que se manda es el dano concreto y las candidatas, no la
+    descripcion completa: esta ocupaba los 300 caracteres del parametro con
+    prosa sobre el follaje y el administrador tenia que leerla entera para
+    saber que se vio.
     """
     finca = (monitoreo or {}).get("finca") or "no especificada"
     lote = (monitoreo or {}).get("lote") or "no especificado"
     descripcion = foto.get("descripcion") or "sin descripcion"
-
     sugeridas = foto.get("plagas_sugeridas") or []
-    candidatas = f" Compatible con: {', '.join(sugeridas)}." if sugeridas else ""
+
+    vistos = [DANOS_RELEVANTES[d] for d in (danos or []) if d in DANOS_RELEVANTES]
+    partes = []
+    if vistos:
+        partes.append(f"Daño visible: {', '.join(vistos)}")
+    if sugeridas:
+        partes.append(f"compatible con {', '.join(sugeridas)}")
+    hallazgo = ". ".join(partes) if partes else motivo
 
     respaldo = (
-        f"📷 Foto con posible daño de plaga cuarentenaria ({motivo})\n"
+        f"📷 Foto con posible daño de plaga cuarentenaria\n"
         f"Finca: {finca}\n"
         f"Lote: {lote}\n"
+        f"{hallazgo}\n"
         f"Descripción: {descripcion}\n"
-        f"{candidatas.strip()}\n"
         "A confirmar en campo."
     )
 
@@ -162,7 +220,7 @@ def _notificar_dano_en_foto(foto: dict, monitoreo: dict | None, motivo: str) -> 
                 "media",
                 finca,
                 lote,
-                f"{descripcion}{candidatas}",
+                hallazgo,
                 "posible daño de plaga cuarentenaria en foto, a confirmar en campo",
                 foto.get("remitente") or "desconocido",
             ],
