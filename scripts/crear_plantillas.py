@@ -4,9 +4,18 @@ Hacen falta porque WhatsApp solo entrega texto libre dentro de las 24 horas
 siguientes al ultimo mensaje del destinatario. Una alerta de madrugada o de fin
 de semana cae fuera de esa ventana y solo llega si va como plantilla aprobada.
 
-Este script existe porque las plantillas se han perdido antes del lado de Meta
-y reconstruirlas a mano es lento y propenso a errores. Es idempotente: si una
-plantilla ya existe, la reporta y sigue.
+Es idempotente: si una plantilla ya existe, la reporta y sigue.
+
+La WABA se pasa en META_WABA_ID y TIENE que ser la que contiene el numero del
+agente. Una cuenta de Meta suele tener tambien la WABA de prueba que crea el
+propio Meta, con su numero +1 555..., y las plantillas creadas ahi se quedan en
+PENDING sin que nada las use: el envio resuelve la plantilla contra la WABA
+dueña del numero, no contra la que uno mire en el panel. Por eso el script
+verifica primero que META_PHONE_NUMBER_ID este en esa WABA y se niega a crear
+nada si no lo esta.
+
+Si no sabes el id: aparece en el log del agente al llegar el primer mensaje
+("Eventos recibidos de la WABA ..."), porque Meta lo manda en cada evento.
 
 Reglas de Meta que condicionan el texto de abajo:
   - una variable no puede ir al principio ni al final del cuerpo
@@ -37,7 +46,8 @@ from app.services.meta_whatsapp_service import (  # noqa: E402
     PLANTILLA_RESUMEN,
 )
 
-WABA_ID = os.environ.get("META_WABA_ID", "1392103483122796")
+WABA_ID = os.environ.get("META_WABA_ID")
+PHONE_ID = os.environ.get("META_PHONE_NUMBER_ID")
 API = "https://graph.facebook.com/v21.0"
 
 
@@ -142,7 +152,38 @@ def listar() -> dict:
     return {t["name"]: t for t in respuesta.get("data", [])}
 
 
+def waba_contiene_el_numero() -> bool:
+    """Que la WABA sea la dueña del numero del agente.
+
+    Sin esto las plantillas se pueden crear en la WABA de prueba de Meta y
+    quedarse ahi sin que nada las use.
+    """
+    respuesta = get(f"{API}/{WABA_ID}/phone_numbers?fields=id,display_phone_number")
+    numeros = respuesta.get("data", [])
+    if "error_http" in respuesta:
+        print(f"  No se pudieron listar los numeros: {respuesta['error_http'].get('error', {}).get('message')}")
+        return False
+
+    for n in numeros:
+        if n["id"] == PHONE_ID:
+            print(f"  WABA {WABA_ID} contiene {n.get('display_phone_number')} (ok)\n")
+            return True
+
+    print(f"  La WABA {WABA_ID} NO contiene el numero {PHONE_ID}.")
+    print(f"  Numeros que tiene: {[n.get('display_phone_number') for n in numeros]}")
+    print("  Las plantillas creadas aqui no las usaria nadie. Revisa META_WABA_ID.")
+    return False
+
+
 def main() -> int:
+    if not WABA_ID:
+        print("Falta META_WABA_ID en el .env. Aparece en el log del agente al")
+        print("llegar el primer mensaje: 'Eventos recibidos de la WABA ...'")
+        return 1
+
+    if "--estado" not in sys.argv and not waba_contiene_el_numero():
+        return 1
+
     existentes = listar()
 
     if "--estado" not in sys.argv:
