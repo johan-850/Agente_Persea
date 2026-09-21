@@ -1,6 +1,9 @@
+import logging
 import os
 
 from app.services.ia_service import get_client
+
+logger = logging.getLogger("monitoreo_ia")
 
 MODEL = "claude-haiku-4-5-20251001"
 
@@ -57,6 +60,20 @@ de monitoreo de plagas agricolas enviados por WhatsApp. Los mensajes son texto
 libre, desordenado, con emojis, viñetas variadas y formatos distintos segun
 quien escribe.
 
+PRIMERO decide si el mensaje es realmente un reporte de campo y ponlo en
+"es_reporte_de_campo". Por el mismo chat pasa mucha conversacion que NO es un
+reporte: saludos, preguntas, confirmaciones ("ya voy", "listo"), coordinacion
+del dia e instrucciones de los administradores al equipo.
+
+Un reporte de campo es alguien contando lo que OBSERVO en el lote. Hablar de
+una plaga no es observarla: "dejemos por ahora el stenoma que veamos en las
+ramas, lo principal es no enviar fruta con stenoma al acopio" es una
+instruccion, no un hallazgo, y va con es_reporte_de_campo=false.
+
+Cuando es_reporte_de_campo sea false, devuelve "reportes" vacio y no extraigas
+nada mas. En la duda, si el mensaje no describe ninguna observacion concreta en
+un lote, marcalo como false.
+
 IMPORTANTE: un solo mensaje puede reportar sobre VARIOS lotes distintos (ej.
 "se finaliza lote #13... se pasa a realizar esta misma labor al lote #14...").
 Debes devolver un elemento en "reportes" por CADA lote mencionado.
@@ -104,9 +121,17 @@ REPORTE_MONITOREO_TOOL = {
     "input_schema": {
         "type": "object",
         "properties": {
+            "es_reporte_de_campo": {
+                "type": "boolean",
+                "description": (
+                    "true solo si el mensaje describe observaciones hechas en el lote. "
+                    "false para saludos, preguntas, coordinacion e instrucciones, aunque "
+                    "mencionen plagas."
+                ),
+            },
             "reportes": {
                 "type": "array",
-                "description": "Un elemento por cada lote distinto mencionado en el mensaje.",
+                "description": "Un elemento por cada lote distinto mencionado en el mensaje. Vacio si no es un reporte de campo.",
                 "items": {
                     "type": "object",
                     "properties": {
@@ -139,7 +164,7 @@ REPORTE_MONITOREO_TOOL = {
                 },
             },
         },
-        "required": ["reportes"],
+        "required": ["es_reporte_de_campo", "reportes"],
     },
 }
 
@@ -175,6 +200,14 @@ def _extraccion_simulada(texto: str) -> dict:
 
 
 def extraer_reportes_monitoreo(texto: str) -> list[dict]:
+    """Devuelve un reporte por lote, o lista vacia si el mensaje no es un
+    reporte de campo.
+
+    Por el chat pasa mucha conversacion suelta. Guardarla como monitoreo no
+    solo ensucia el historial y el resumen diario: las reglas duras corren
+    sobre el texto, asi que un administrador escribiendo "dejemos por ahora el
+    stenoma de las ramas" disparaba una alerta de plaga cuarentenaria.
+    """
     if not os.environ.get("ANTHROPIC_API_KEY"):
         return [_extraccion_simulada(texto)]
 
@@ -191,8 +224,13 @@ def extraer_reportes_monitoreo(texto: str) -> list[dict]:
     )
     for bloque in respuesta.content:
         if bloque.type == "tool_use":
+            if not bloque.input.get("es_reporte_de_campo"):
+                logger.info("Mensaje descartado, no es un reporte: %r", texto[:120])
+                return []
             reportes = bloque.input.get("reportes") or []
             if not reportes:
+                # Dijo que si es reporte pero no extrajo lotes. Se guarda el
+                # texto crudo antes que perder un hallazgo.
                 return [_extraccion_simulada(texto)]
             return [_normalizar(r) for r in reportes]
     raise ValueError("Claude no devolvio una extraccion estructurada")
