@@ -36,3 +36,19 @@ def reclamar(wamid: str) -> bool:
 
     # Con ignore_duplicates PostgREST no devuelve fila cuando ya existia.
     return bool(resultado.data)
+
+
+def liberar(wamid: str) -> None:
+    """Suelta el wamid para que el mensaje se pueda volver a procesar.
+
+    Se reclama antes de procesar, no despues, porque si no los reenvios que
+    llegan mientras el mensaje aun se procesa lo duplicarian. El precio es que
+    un fallo dejaria el mensaje reclamado y perdido para siempre: ya paso una
+    vez, con un reporte de campo que murio en un corte de conexion con
+    Supabase.
+    """
+    try:
+        get_client().table("mensajes_procesados").delete().eq("wamid", wamid).execute()
+        logger.info("wamid %s liberado, se puede reprocesar", wamid)
+    except Exception:
+        logger.exception("No se pudo liberar el wamid %s", wamid)

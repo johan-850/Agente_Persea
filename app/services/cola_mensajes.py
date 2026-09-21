@@ -15,6 +15,8 @@ import queue
 import threading
 from typing import Callable
 
+from app.services.idempotencia_service import liberar
+
 logger = logging.getLogger("cola_mensajes")
 
 _cola: "queue.Queue[tuple[Callable[[dict], None], dict]]" = queue.Queue()
@@ -30,7 +32,18 @@ def _bucle() -> None:
         except Exception:
             # Un fallo no puede matar al hilo: se perderian todos los mensajes
             # siguientes sin que nadie se entere.
-            logger.exception("Fallo procesando el mensaje %s", mensaje.get("id"))
+            #
+            # El mensaje completo va al log porque a este punto ya se respondio
+            # 200 a Meta y no habra reenvio: si no queda aqui, el reporte de
+            # campo se pierde y nadie se entera.
+            logger.exception(
+                "Fallo procesando el mensaje %s; contenido: %s",
+                mensaje.get("id"),
+                mensaje,
+            )
+            wamid = mensaje.get("id")
+            if wamid:
+                liberar(wamid)
         finally:
             _cola.task_done()
 
