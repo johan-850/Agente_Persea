@@ -89,6 +89,10 @@ def describir_foto(contenido: bytes, mime_type: str) -> dict | None:
     respuesta = get_client().messages.create(
         model=MODEL,
         max_tokens=600,
+        # Describir una foto es una tarea de observacion, no de redaccion. Con
+        # la temperatura por defecto la misma imagen daba veredictos distintos
+        # en cada pasada: una vez "perforaciones" y a la siguiente nada.
+        temperature=0,
         messages=[
             {
                 "role": "user",

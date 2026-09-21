@@ -75,3 +75,14 @@ create table if not exists fotos (
 create index if not exists idx_fotos_fecha on fotos (fecha_hora);
 create index if not exists idx_fotos_monitoreo on fotos (monitoreo_id);
 create index if not exists idx_fotos_remitente on fotos (remitente);
+
+-- Meta entrega cada evento "al menos una vez": reenvia lo que tarde en
+-- confirmarse y lo que quedara pendiente durante un corte. Sin esta tabla un
+-- mismo reporte se guarda varias veces, cada copia dispara su propia alerta y
+-- cada foto se vuelve a pasar por el modelo de vision.
+create table if not exists mensajes_procesados (
+    wamid text primary key,
+    recibido_en timestamptz not null default now()
+);
+
+create index if not exists idx_mensajes_procesados_fecha on mensajes_procesados (recibido_en);

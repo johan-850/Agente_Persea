@@ -181,6 +181,9 @@ def extraer_reportes_monitoreo(texto: str) -> list[dict]:
     respuesta = get_client().messages.create(
         model=MODEL,
         max_tokens=2048,
+        # Extraer campos de un reporte es determinista: el mismo texto debe
+        # dar siempre los mismos datos.
+        temperature=0,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": texto}],
         tools=[REPORTE_MONITOREO_TOOL],

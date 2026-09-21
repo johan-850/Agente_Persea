@@ -2,10 +2,13 @@ import logging
 import os
 
 from fastapi import APIRouter, Request, Response
+from starlette.concurrency import run_in_threadpool
 
 logger = logging.getLogger("meta_webhook")
 
+from app.services.cola_mensajes import encolar
 from app.services.fotos_service import procesar_foto
+from app.services.idempotencia_service import reclamar
 from app.services.monitoreo_service import procesar_mensaje_monitoreo
 
 router = APIRouter()
@@ -47,20 +50,30 @@ def verificar_webhook_meta(request: Request):
 
 @router.post("/meta/webhook")
 async def recibir_mensaje_meta(request: Request):
+    """Confirma de inmediato y deja el trabajo pesado a la cola.
+
+    Procesar aqui mismo tardaba entre 4 y 6 segundos por mensaje; Meta no
+    alcanzaba a recibir el 200, reenviaba el evento y cada reenvio volvia a
+    guardar el reporte y a repetir la alerta.
+
+    Nunca se devuelve 500: si el webhook falla seguido, Meta desactiva la
+    suscripcion y dejan de llegar los reportes.
+    """
     payload = await request.json()
 
     for entry in payload.get("entry", []):
         for change in entry.get("changes", []):
             valor = change.get("value", {})
             for estado in valor.get("statuses", []):
-                logger.warning("ESTADO DE MENSAJE: %s", estado)
+                logger.debug("Estado de mensaje: %s", estado)
             for mensaje in valor.get("messages", []):
-                try:
-                    _procesar_mensaje(mensaje)
-                except Exception:
-                    # Devolver 500 haria que Meta reintente y, si falla seguido,
-                    # desactive la suscripcion del webhook. Se registra el error
-                    # y se responde 200 igual.
-                    logger.exception("Fallo procesando mensaje: %s", mensaje.get("id"))
+                wamid = mensaje.get("id")
+                # run_in_threadpool: el cliente de Supabase es sincrono y
+                # bloquearia el bucle de eventos de todas las peticiones.
+                if wamid and not await run_in_threadpool(reclamar, wamid):
+                    logger.info("Reenvio de %s descartado, ya se habia procesado", wamid)
+                    continue
+                pendientes = encolar(_procesar_mensaje, mensaje)
+                logger.info("Mensaje %s encolado (%d en cola)", wamid, pendientes)
 
     return Response(status_code=200)

@@ -169,6 +169,7 @@ def extraer_reporte(texto: str) -> dict:
     respuesta = get_client().messages.create(
         model=MODEL,
         max_tokens=1024,
+        temperature=0,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": texto}],
         tools=[REPORTE_TOOL],
