@@ -1,5 +1,6 @@
 import logging
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timedelta, timezone
 
 from app.db.supabase_client import get_client
 from app.services import meta_whatsapp_service as whatsapp_service
@@ -10,6 +11,120 @@ from app.services.alertas_monitoreo_service import (
 from app.services.monitoreo_ia_service import extraer_reportes_monitoreo
 
 logger = logging.getLogger("monitoreo")
+
+# Cuanto se espera la respuesta al lote que se pidio. Pasado eso, un numero
+# suelto ya no se interpreta como respuesta: la monitora siguio con otra cosa
+# y seria peor asociarlo al reporte equivocado.
+VENTANA_RESPUESTA_LOTE = timedelta(hours=2)
+
+# Una respuesta al lote es corta. Un reporte completo tambien dice "lote #10",
+# asi que el largo es lo que distingue "12" de un reporte de jornada.
+_MAX_LARGO_RESPUESTA = 60
+_SOLO_NUMERO = re.compile(r"^\s*#?\s*(\d{1,3})\s*$")
+_MENCIONA_LOTE = re.compile(r"\blote\s*#?\s*(\d{1,3})\b", re.IGNORECASE)
+
+
+def _lote_en_respuesta(texto: str | None) -> str | None:
+    """El numero de lote si el mensaje parece la respuesta a nuestra pregunta.
+
+    Devuelve None ante cualquier duda: colgar un numero del reporte equivocado
+    es peor que dejar el reporte sin lote.
+    """
+    if not texto or len(texto) > _MAX_LARGO_RESPUESTA:
+        return None
+
+    coincidencia = _SOLO_NUMERO.match(texto)
+    if coincidencia:
+        return coincidencia.group(1)
+
+    coincidencia = _MENCIONA_LOTE.search(texto)
+    if coincidencia:
+        return coincidencia.group(1)
+
+    return None
+
+
+def _reporte_sin_lote_reciente(remitente: str) -> dict | None:
+    desde = (datetime.now(timezone.utc) - VENTANA_RESPUESTA_LOTE).isoformat()
+    filas = (
+        get_client()
+        .table("monitoreos")
+        .select("id, finca, es_alerta, tipo_alerta, plagas_observadas")
+        .eq("remitente", remitente)
+        .is_("lote", "null")
+        .gte("fecha_hora", desde)
+        .order("fecha_hora", desc=True)
+        .limit(1)
+        .execute()
+        .data
+    )
+    return filas[0] if filas else None
+
+
+def _completar_lote_pendiente(texto: str, remitente: str) -> bool:
+    """Si el mensaje responde al lote que pedimos, lo completa y avisa.
+
+    Devuelve True cuando se consumio como respuesta, para no guardarlo ademas
+    como si fuera un reporte nuevo.
+    """
+    lote = _lote_en_respuesta(texto)
+    if not lote:
+        return False
+
+    pendiente = _reporte_sin_lote_reciente(remitente)
+    if not pendiente:
+        return False
+
+    get_client().table("monitoreos").update({"lote": lote}).eq("id", pendiente["id"]).execute()
+    finca = pendiente.get("finca") or "sin finca"
+    logger.info("Reporte %s completado con el lote %s", pendiente["id"], lote)
+
+    try:
+        whatsapp_service.enviar_mensaje(
+            remitente, f"Listo, el reporte de finca {finca} quedó registrado en el lote {lote}."
+        )
+    except Exception:
+        logger.exception("No se pudo confirmar el lote a %s", remitente)
+
+    # Si ese reporte ya habia disparado alerta, los administradores la
+    # recibieron con "lote no especificado" y no sabrian a donde ir.
+    if pendiente.get("es_alerta"):
+        criticos = hallazgos_que_alertan(pendiente.get("plagas_observadas"))
+        detalle = "; ".join(str(c) for c in criticos) or (pendiente.get("tipo_alerta") or "")
+        try:
+            whatsapp_service.enviar_a_administradores(
+                f"📍 Complemento de la alerta de finca {finca}: corresponde al *lote {lote}*.\n"
+                f"{detalle}"
+            )
+        except Exception:
+            logger.exception("No se pudo complementar la alerta del reporte %s", pendiente["id"])
+
+    return True
+
+
+def _pedir_lote(remitente: str, sin_lote: list[dict]) -> None:
+    """Le pide a la monitora el lote que falta.
+
+    Una sola pregunta por mensaje, no por reporte: si un mensaje cubre tres
+    lotes y ninguno trae numero, preguntar tres veces es ruido.
+    """
+    fincas = sorted({str(r["finca"]) for r in sin_lote if r.get("finca")})
+    de_finca = f" de finca {', '.join(fincas)}" if fincas else ""
+    urgencia = (
+        " Es un hallazgo que hay que revisar, así que ayuda saberlo pronto."
+        if any(r.get("es_alerta") for r in sin_lote)
+        else ""
+    )
+
+    try:
+        whatsapp_service.enviar_mensaje(
+            remitente,
+            f"Recibí tu reporte{de_finca}, pero no encontré el número de lote.{urgencia}\n"
+            "¿A qué lote corresponde? Puedes responderme solo con el número.",
+        )
+        logger.info("Se pidio el lote a %s (%d reporte/s sin lote)", remitente, len(sin_lote))
+    except Exception:
+        logger.exception("No se pudo pedir el lote a %s", remitente)
 
 
 def _texto_del_lote(extraido: dict) -> str:
@@ -31,6 +146,10 @@ def procesar_mensaje_monitoreo(texto: str, remitente: str) -> list[dict]:
     mosca blanca, salio marcado como plaga cuarentenaria porque el lote 3 del
     mismo mensaje tenia stenoma.
     """
+    # Puede ser la respuesta al lote que pedimos, no un reporte nuevo.
+    if _completar_lote_pendiente(texto, remitente):
+        return []
+
     extraidos = extraer_reportes_monitoreo(texto)
 
     por_lote = [evaluar_alerta_monitoreo(_texto_del_lote(e)) for e in extraidos]
@@ -69,6 +188,10 @@ def procesar_mensaje_monitoreo(texto: str, remitente: str) -> list[dict]:
 
         if guardado.get("es_alerta"):
             _notificar_alerta(guardado)
+
+    sin_lote = [g for g in guardados if not g.get("lote")]
+    if sin_lote:
+        _pedir_lote(remitente, sin_lote)
 
     return guardados
 
