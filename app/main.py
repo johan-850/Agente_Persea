@@ -26,6 +26,7 @@ from app.api.routes_monitoreo import router as monitoreo_router  # noqa: E402
 from app.api.routes_reportes import router as reportes_router  # noqa: E402
 from app.api.seguridad import exigir_api_key  # noqa: E402
 from app.horario import JORNADA_FIN, JORNADA_INICIO, ZONA  # noqa: E402
+from app.services.resumen_semanal_service import enviar_resumen_semanal  # noqa: E402
 from app.services.resumen_service import enviar_resumen_diario  # noqa: E402
 
 app = FastAPI(title="Agente de Monitoreo - Reportes de Campo")
@@ -43,26 +44,39 @@ scheduler = BackgroundScheduler()
 @app.on_event("startup")
 def iniciar_scheduler():
     # La hora es la de las fincas, no la del servidor. Sin timezone explicito,
-    # un servidor en UTC dispararia el resumen de las 17:00 a las 12:00 de
+    # un servidor en UTC dispararia el resumen de las 18:00 a las 13:00 de
     # Colombia, a media jornada y con la mitad de los reportes sin llegar.
-    hora = int(os.environ.get("HORA_RESUMEN_DIARIO", "17"))
+    hora = int(os.environ.get("HORA_RESUMEN_DIARIO", "18"))
     scheduler.add_job(
         enviar_resumen_diario, "cron", hour=hora, minute=0, timezone=ZONA, id="resumen_diario"
     )
+
+    # El semanal sale media hora despues del diario del viernes, para que no
+    # lleguen los dos pisados y se lean en orden: primero el dia, luego la
+    # semana.
+    scheduler.add_job(
+        enviar_resumen_semanal,
+        "cron",
+        day_of_week="fri",
+        hour=hora,
+        minute=30,
+        timezone=ZONA,
+        id="resumen_semanal",
+    )
+
     scheduler.start()
 
     # Lo que quedo en la cola cuando murio el proceso anterior.
     recuperar_cola()
 
-    proxima = scheduler.get_job("resumen_diario").next_run_time
-    logging.getLogger("main").info(
-        "Resumen diario programado a las %02d:00 de Colombia; proximo envio %s "
-        "(jornada de campo %s a %s)",
-        hora,
-        proxima,
+    log = logging.getLogger("main")
+    log.info(
+        "Jornada de campo %s a %s (hora de Colombia)",
         JORNADA_INICIO.strftime("%H:%M"),
         JORNADA_FIN.strftime("%H:%M"),
     )
+    for identificador, que in (("resumen_diario", "diario"), ("resumen_semanal", "semanal")):
+        log.info("Resumen %s: proximo envio %s", que, scheduler.get_job(identificador).next_run_time)
 
 
 @app.on_event("shutdown")

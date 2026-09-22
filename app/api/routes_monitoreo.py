@@ -5,6 +5,7 @@ from app.horario import limites_utc
 from app.models.reporte import ReporteEntrada
 from app.services import storage_service
 from app.services.monitoreo_service import procesar_mensaje_monitoreo
+from app.services.resumen_semanal_service import enviar_resumen_semanal
 from app.services.resumen_service import enviar_resumen_diario
 
 router = APIRouter()
@@ -71,3 +72,9 @@ def disparar_resumen_diario(fecha: str | None = None):
     el resumen a los administradores las veces que quisiera.
     """
     return {"enviado": True, "resumen": enviar_resumen_diario(fecha)}
+
+
+@router.post("/tareas/resumen-semanal")
+def disparar_resumen_semanal(fecha: str | None = None):
+    """Envia el resumen de la semana a la que pertenece esa fecha."""
+    return {"enviado": True, "resumen": enviar_resumen_semanal(fecha)}

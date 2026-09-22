@@ -53,3 +53,41 @@ def limites_utc(fecha: str) -> tuple[str, str]:
         inicio.astimezone(timezone.utc).isoformat(),
         fin.astimezone(timezone.utc).isoformat(),
     )
+
+
+MESES = (
+    "enero", "febrero", "marzo", "abril", "mayo", "junio",
+    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+)
+
+
+def semana_de(fecha: str) -> tuple[str, str]:
+    """(lunes, viernes) de la semana laboral a la que pertenece esa fecha."""
+    dia = date.fromisoformat(fecha)
+    lunes = dia - timedelta(days=dia.weekday())
+    return lunes.isoformat(), (lunes + timedelta(days=4)).isoformat()
+
+
+def limites_semana_utc(fecha: str) -> tuple[str, str]:
+    """(inicio, fin) de la semana laboral de esa fecha, en UTC.
+
+    De lunes 00:00 a sabado 00:00 hora Colombia. El sabado es el limite
+    exclusivo: si alguien reporta un sabado por la manana entra en la semana
+    que acaba de terminar, que es donde lo buscaria un administrador.
+    """
+    lunes, _ = semana_de(fecha)
+    inicio = datetime.combine(date.fromisoformat(lunes), time.min, tzinfo=ZONA)
+    fin = inicio + timedelta(days=5)
+    return (
+        inicio.astimezone(timezone.utc).isoformat(),
+        fin.astimezone(timezone.utc).isoformat(),
+    )
+
+
+def rango_legible(desde: str, hasta: str) -> str:
+    """'22 al 26 de septiembre', o con los dos meses si la semana los cruza."""
+    a = date.fromisoformat(desde)
+    b = date.fromisoformat(hasta)
+    if a.month == b.month:
+        return f"{a.day} al {b.day} de {MESES[a.month - 1]}"
+    return f"{a.day} de {MESES[a.month - 1]} al {b.day} de {MESES[b.month - 1]}"

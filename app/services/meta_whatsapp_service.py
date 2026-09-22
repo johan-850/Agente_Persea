@@ -11,6 +11,7 @@ IDIOMA_PLANTILLA = "es"
 # cae al respaldo de texto libre (que solo llega dentro de la ventana de 24h).
 PLANTILLA_ALERTA = "reporte_monitoreo_alerta"
 PLANTILLA_RESUMEN = "reporte_monitoreo_resumen"
+PLANTILLA_SEMANAL = "reporte_monitoreo_semanal"
 
 # Limite defensivo por parametro: el cuerpo completo de una plantilla no puede
 # pasar de 1024 caracteres.

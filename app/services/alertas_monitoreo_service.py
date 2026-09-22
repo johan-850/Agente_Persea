@@ -104,6 +104,38 @@ def evaluar_dano_en_foto(
     return ", ".join(motivos) if motivos else None
 
 
+# Varios nombres del PLAN MIPE apuntan a la misma plaga: "barrenador de
+# semilla" es Heilipus lauri, "escama cerosa" es Ceroplastes rubens. Para el
+# resumen semanal se agrupan, porque lo que importa ahi no es como la escribio
+# cada monitora sino en cuantos lotes apareció.
+GRUPO_CUARENTENARIA = {
+    "heilipus": "Heilipus (barrenadores)",
+    "barrenador de semilla": "Heilipus (barrenadores)",
+    "barrenador de tallo": "Heilipus (barrenadores)",
+    "stenoma": "Stenoma catenifer",
+    "pasador del fruto": "Stenoma catenifer",
+    "maconellicoccus": "Maconellicoccus hirsutus",
+    "cochinilla rosada": "Maconellicoccus hirsutus",
+    "pseudococcus": "Pseudococcus (cochinillas harinosas)",
+    "jackbeardsleyi": "Pseudococcus (cochinillas harinosas)",
+    "landoi": "Pseudococcus (cochinillas harinosas)",
+    "ceroplastes": "Ceroplastes rubens",
+    "escama cerosa": "Ceroplastes rubens",
+    "escama roja": "Ceroplastes rubens",
+    "saissetia": "Saissetia batesi",
+    "escama hemisferica": "Saissetia batesi",
+}
+
+
+def grupo_cuarentenaria(texto: str) -> str | None:
+    """A que plaga cuarentenaria corresponde ese hallazgo, si a alguna."""
+    plano = normalizar(str(texto))
+    for termino, grupo in GRUPO_CUARENTENARIA.items():
+        if termino in plano:
+            return grupo
+    return None
+
+
 def hallazgos_que_alertan(plagas: list | None) -> list:
     """Cuales de los hallazgos del lote son los que disparan la alerta.
 

@@ -44,6 +44,7 @@ from app.services.meta_whatsapp_service import (  # noqa: E402
     IDIOMA_PLANTILLA,
     PLANTILLA_ALERTA,
     PLANTILLA_RESUMEN,
+    PLANTILLA_SEMANAL,
 )
 
 WABA_ID = os.environ.get("META_WABA_ID")
@@ -123,6 +124,43 @@ PLANTILLAS = [
             {"type": "FOOTER", "text": "Agente de monitoreo - Agricola Persea"},
         ],
     },
+    # {{1}} periodo   {{2}} reportes de la semana   {{3}} cuantos alertaron
+    # {{4}} dispersion de las cuarentenarias y cobertura
+    # resumen_semanal_service.enviar_resumen_semanal
+    #
+    # Va aparte de la diaria porque aquella dice "registrados el {{1}}", y con
+    # un rango de fechas quedaria "registrados el 22 al 26 de septiembre".
+    {
+        "name": PLANTILLA_SEMANAL,
+        "language": IDIOMA_PLANTILLA,
+        "category": "UTILITY",
+        "components": [
+            {
+                "type": "HEADER",
+                "format": "TEXT",
+                "text": "Resumen semanal de monitoreo",
+            },
+            {
+                "type": "BODY",
+                "text": (
+                    "Cierre de la semana del {{1}}. Se registraron {{2}} reportes de "
+                    "lote, de los cuales {{3}} generaron alerta.\n\n"
+                    "Resumen: {{4}}\n\n"
+                    "Consulte el detalle por lote en el sistema."
+                ),
+                "example": {
+                    "body_text": [[
+                        "22 al 26 de septiembre",
+                        "47",
+                        "8",
+                        "Stenoma catenifer en 5 lote(s); Heilipus (barrenadores) en 2 lote(s); "
+                        "23 lotes monitoreados, 57 fotos con daño",
+                    ]]
+                },
+            },
+            {"type": "FOOTER", "text": "Agente de monitoreo - Agricola Persea"},
+        ],
+    },
 ]
 
 
@@ -158,7 +196,7 @@ def waba_contiene_el_numero() -> bool:
     Sin esto las plantillas se pueden crear en la WABA de prueba de Meta y
     quedarse ahi sin que nada las use.
     """
-    respuesta = get(f"{API}/{WABA_ID}/phone_numbers?fields=id,display_phone_number")
+    respuesta = _peticion(f"{API}/{WABA_ID}/phone_numbers?fields=id,display_phone_number")
     numeros = respuesta.get("data", [])
     if "error_http" in respuesta:
         print(f"  No se pudieron listar los numeros: {respuesta['error_http'].get('error', {}).get('message')}")
