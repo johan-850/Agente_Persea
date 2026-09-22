@@ -86,3 +86,20 @@ create table if not exists mensajes_procesados (
 );
 
 create index if not exists idx_mensajes_procesados_fecha on mensajes_procesados (recibido_en);
+
+-- La cola de procesamiento vivia solo en memoria: un reinicio con mensajes
+-- encolados los perdia del todo, y encima con su wamid ya reclamado, asi que
+-- ni un reenvio de Meta los habria recuperado. Con despliegue continuo un
+-- reinicio es cada actualizacion.
+--
+-- payload guarda el mensaje crudo; procesado_en queda en null hasta que se
+-- termina, asi al arrancar se sabe que quedo a medias. intentos evita que un
+-- mensaje que tumba el proceso lo deje en un bucle de arranques.
+alter table mensajes_procesados
+    add column if not exists payload jsonb,
+    add column if not exists procesado_en timestamptz,
+    add column if not exists intentos integer not null default 0;
+
+create index if not exists idx_mensajes_pendientes
+    on mensajes_procesados (recibido_en)
+    where procesado_en is null;

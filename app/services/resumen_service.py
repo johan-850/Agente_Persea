@@ -1,17 +1,17 @@
-from datetime import datetime
-
 from app.db.supabase_client import get_client
+from app.horario import hoy, limites_utc
 from app.services import meta_whatsapp_service as whatsapp_service
 from app.services.alertas_monitoreo_service import hallazgos_que_alertan
 
 
 def _monitoreos_del_dia(fecha: str) -> list[dict]:
+    desde, hasta = limites_utc(fecha)
     return (
         get_client()
         .table("monitoreos")
         .select("*")
-        .gte("fecha_hora", f"{fecha}T00:00:00")
-        .lte("fecha_hora", f"{fecha}T23:59:59")
+        .gte("fecha_hora", desde)
+        .lt("fecha_hora", hasta)
         .order("finca")
         .order("lote")
         .execute()
@@ -20,12 +20,13 @@ def _monitoreos_del_dia(fecha: str) -> list[dict]:
 
 
 def _fotos_del_dia(fecha: str) -> list[dict]:
+    desde, hasta = limites_utc(fecha)
     return (
         get_client()
         .table("fotos")
         .select("id, monitoreo_id, es_alerta, plagas_sugeridas")
-        .gte("fecha_hora", f"{fecha}T00:00:00")
-        .lte("fecha_hora", f"{fecha}T23:59:59")
+        .gte("fecha_hora", desde)
+        .lt("fecha_hora", hasta)
         .execute()
         .data
     )
@@ -158,7 +159,7 @@ def _formatear_detalle_plano(monitoreos: list[dict], fotos: list[dict] | None = 
 
 
 def enviar_resumen_diario(fecha: str | None = None) -> str:
-    fecha = fecha or datetime.now().date().isoformat()
+    fecha = fecha or hoy()
     monitoreos = _monitoreos_del_dia(fecha)
     fotos = _fotos_del_dia(fecha)
     texto = _formatear_resumen(fecha, monitoreos, fotos)

@@ -15,7 +15,12 @@ import queue
 import threading
 from typing import Callable
 
-from app.services.idempotencia_service import liberar
+from app.services.idempotencia_service import (
+    contar_intento,
+    liberar,
+    marcar_procesado,
+    pendientes,
+)
 
 logger = logging.getLogger("cola_mensajes")
 
@@ -27,6 +32,7 @@ _candado = threading.Lock()
 def _bucle() -> None:
     while True:
         manejador, mensaje = _cola.get()
+        wamid = mensaje.get("id")
         try:
             manejador(mensaje)
         except Exception:
@@ -37,13 +43,14 @@ def _bucle() -> None:
             # 200 a Meta y no habra reenvio: si no queda aqui, el reporte de
             # campo se pierde y nadie se entera.
             logger.exception(
-                "Fallo procesando el mensaje %s; contenido: %s",
-                mensaje.get("id"),
-                mensaje,
+                "Fallo procesando el mensaje %s; contenido: %s", wamid, mensaje
             )
-            wamid = mensaje.get("id")
             if wamid:
                 liberar(wamid)
+        else:
+            # Cerrarlo evita que se reintente en el proximo arranque.
+            if wamid:
+                marcar_procesado(wamid)
         finally:
             _cola.task_done()
 
@@ -64,5 +71,27 @@ def encolar(manejador: Callable[[dict], None], mensaje: dict) -> int:
     return _cola.qsize()
 
 
-def pendientes() -> int:
+def en_cola() -> int:
     return _cola.qsize()
+
+
+def recuperar_pendientes(manejador: Callable[[dict], None]) -> int:
+    """Vuelve a encolar lo que quedo a medias cuando murio el proceso.
+
+    Sin esto, los mensajes que estaban en la cola se perdian del todo: solo
+    existian en memoria, y su wamid ya estaba reclamado, asi que ni un reenvio
+    de Meta los habria recuperado.
+    """
+    filas = pendientes()
+    if not filas:
+        return 0
+
+    for fila in filas:
+        contar_intento(fila["wamid"], fila.get("intentos") or 0)
+        encolar(manejador, fila["payload"])
+
+    logger.warning(
+        "Se recuperaron %d mensaje(s) que quedaron sin procesar en el arranque anterior",
+        len(filas),
+    )
+    return len(filas)

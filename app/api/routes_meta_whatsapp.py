@@ -8,7 +8,7 @@ from starlette.concurrency import run_in_threadpool
 logger = logging.getLogger("meta_webhook")
 
 from app.api.seguridad import verificar_firma_meta
-from app.services.cola_mensajes import encolar
+from app.services.cola_mensajes import encolar, recuperar_pendientes
 from app.services.fotos_service import procesar_foto
 from app.services.idempotencia_service import reclamar
 from app.services.monitoreo_service import procesar_mensaje_monitoreo
@@ -19,6 +19,11 @@ router = APIRouter()
 # del token, pero viene en cada evento. Se registra una vez por arranque: hace
 # falta para crear plantillas en la cuenta correcta.
 _wabas_vistas: set[str] = set()
+
+
+def recuperar_cola() -> int:
+    """Se llama al arrancar: reencola lo que quedo a medias."""
+    return recuperar_pendientes(_procesar_mensaje)
 
 
 def _procesar_mensaje(mensaje: dict) -> None:
@@ -86,10 +91,13 @@ async def recibir_mensaje_meta(cuerpo: bytes = Depends(verificar_firma_meta)):
                 wamid = mensaje.get("id")
                 # run_in_threadpool: el cliente de Supabase es sincrono y
                 # bloquearia el bucle de eventos de todas las peticiones.
-                if wamid and not await run_in_threadpool(reclamar, wamid):
+                if wamid and not await run_in_threadpool(reclamar, wamid, mensaje):
                     logger.info("Reenvio de %s descartado, ya se habia procesado", wamid)
                     continue
-                pendientes = encolar(_procesar_mensaje, mensaje)
-                logger.info("Mensaje %s encolado (%d en cola)", wamid, pendientes)
+                logger.info(
+                    "Mensaje %s encolado (%d en cola)",
+                    wamid,
+                    encolar(_procesar_mensaje, mensaje),
+                )
 
     return Response(status_code=200)

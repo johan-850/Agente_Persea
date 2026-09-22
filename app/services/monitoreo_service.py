@@ -3,6 +3,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from app.db.supabase_client import get_client
+from app.horario import hoy, limites_utc
 from app.services import meta_whatsapp_service as whatsapp_service
 from app.services.alertas_monitoreo_service import (
     evaluar_alerta_monitoreo,
@@ -127,6 +128,34 @@ def _pedir_lote(remitente: str, sin_lote: list[dict]) -> None:
         logger.exception("No se pudo pedir el lote a %s", remitente)
 
 
+def _ya_se_registro_hoy(texto: str, remitente: str) -> dict | None:
+    """El mismo reporte, de la misma persona, ya guardado hoy.
+
+    El descarte por wamid solo atrapa los reenvios de Meta. Si la monitora
+    cree que su reporte no entro y lo manda de nuevo, es un mensaje distinto
+    con otro wamid: se guardaba dos veces y podia alertar dos veces.
+
+    Se comparan los textos en memoria y no con un filtro en la consulta
+    porque un reporte de jornada pasa del millar de caracteres y no tiene por
+    que caber en una URL.
+    """
+    desde, hasta = limites_utc(hoy())
+    filas = (
+        get_client()
+        .table("monitoreos")
+        .select("id, lote, texto_original")
+        .eq("remitente", remitente)
+        .gte("fecha_hora", desde)
+        .lt("fecha_hora", hasta)
+        .execute()
+        .data
+    )
+    for fila in filas:
+        if fila.get("texto_original") == texto:
+            return fila
+    return None
+
+
 def _texto_del_lote(extraido: dict) -> str:
     """Lo que la extraccion asigno a ESE lote, para evaluarlo por separado."""
     partes = [
@@ -148,6 +177,24 @@ def procesar_mensaje_monitoreo(texto: str, remitente: str) -> list[dict]:
     """
     # Puede ser la respuesta al lote que pedimos, no un reporte nuevo.
     if _completar_lote_pendiente(texto, remitente):
+        return []
+
+    repetido = _ya_se_registro_hoy(texto, remitente)
+    if repetido:
+        logger.info(
+            "Reporte repetido de %s, ya guardado como %s; no se duplica",
+            remitente,
+            repetido["id"],
+        )
+        try:
+            lote = repetido.get("lote")
+            whatsapp_service.enviar_mensaje(
+                remitente,
+                f"Ese reporte ya lo tenía registrado{f' (lote {lote})' if lote else ''}, "
+                "así que no lo dupliqué. Si querías corregir algo, dime qué cambia.",
+            )
+        except Exception:
+            logger.exception("No se pudo avisar del reporte repetido a %s", remitente)
         return []
 
     extraidos = extraer_reportes_monitoreo(texto)
@@ -174,6 +221,28 @@ def procesar_mensaje_monitoreo(texto: str, remitente: str) -> list[dict]:
             extraido["es_alerta"] = True
             extraido["tipo_alerta"] = extraido.get("tipo_alerta") or tipo_regla
             extraido["prioridad"] = extraido.get("prioridad") or prioridad_regla
+        elif extraido.get("es_alerta"):
+            # El modelo alerto por su cuenta y ninguna regla lo respalda. El
+            # codigo solo sabia escalar: una alerta suya pasaba tal cual, y asi
+            # un reporte de copturomimus perseae —que no es cuarentenaria— salio
+            # como prioridad alta. El prompt ya acota el criterio, pero un
+            # prompt no es una garantia y una regresion lo trae de vuelta.
+            #
+            # No se silencia: el modelo puede cachar una cuarentenaria escrita
+            # de una forma que la lista de reglas no reconoce. Se baja a media y
+            # se dice de donde viene, para que no se lea como un hallazgo
+            # confirmado del catalogo.
+            extraido["prioridad"] = "media"
+            extraido["tipo_alerta"] = (
+                f"{extraido.get('tipo_alerta') or 'hallazgo'} (criterio del modelo, "
+                "sin coincidencia con el catalogo de cuarentenarias)"
+            )
+            logger.warning(
+                "Alerta sin respaldo de las reglas, se baja a media: finca=%r lote=%r %r",
+                extraido.get("finca"),
+                extraido.get("lote"),
+                extraido.get("plagas_observadas"),
+            )
 
         registro = {
             "fecha_hora": datetime.now(timezone.utc).isoformat(),

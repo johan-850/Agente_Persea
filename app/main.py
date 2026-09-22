@@ -20,10 +20,12 @@ logging.basicConfig(
 
 from fastapi import Depends  # noqa: E402
 
+from app.api.routes_meta_whatsapp import recuperar_cola  # noqa: E402
 from app.api.routes_meta_whatsapp import router as meta_whatsapp_router  # noqa: E402
 from app.api.routes_monitoreo import router as monitoreo_router  # noqa: E402
 from app.api.routes_reportes import router as reportes_router  # noqa: E402
 from app.api.seguridad import exigir_api_key  # noqa: E402
+from app.horario import JORNADA_FIN, JORNADA_INICIO, ZONA  # noqa: E402
 from app.services.resumen_service import enviar_resumen_diario  # noqa: E402
 
 app = FastAPI(title="Agente de Monitoreo - Reportes de Campo")
@@ -40,9 +42,27 @@ scheduler = BackgroundScheduler()
 
 @app.on_event("startup")
 def iniciar_scheduler():
+    # La hora es la de las fincas, no la del servidor. Sin timezone explicito,
+    # un servidor en UTC dispararia el resumen de las 17:00 a las 12:00 de
+    # Colombia, a media jornada y con la mitad de los reportes sin llegar.
     hora = int(os.environ.get("HORA_RESUMEN_DIARIO", "17"))
-    scheduler.add_job(enviar_resumen_diario, "cron", hour=hora, minute=0, id="resumen_diario")
+    scheduler.add_job(
+        enviar_resumen_diario, "cron", hour=hora, minute=0, timezone=ZONA, id="resumen_diario"
+    )
     scheduler.start()
+
+    # Lo que quedo en la cola cuando murio el proceso anterior.
+    recuperar_cola()
+
+    proxima = scheduler.get_job("resumen_diario").next_run_time
+    logging.getLogger("main").info(
+        "Resumen diario programado a las %02d:00 de Colombia; proximo envio %s "
+        "(jornada de campo %s a %s)",
+        hora,
+        proxima,
+        JORNADA_INICIO.strftime("%H:%M"),
+        JORNADA_FIN.strftime("%H:%M"),
+    )
 
 
 @app.on_event("shutdown")

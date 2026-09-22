@@ -11,23 +11,38 @@ todos los reenvios, asi que sirve de llave.
 """
 
 import logging
+from datetime import datetime, timezone
 
 from app.db.supabase_client import get_client
 
 logger = logging.getLogger("idempotencia")
 
+# Cuantas veces se reintenta un mensaje que quedo a medias antes de darlo por
+# perdido. Sin tope, un mensaje que tumbe el proceso se reintenta en cada
+# arranque y el agente no vuelve a procesar nada.
+MAX_INTENTOS = 3
 
-def reclamar(wamid: str) -> bool:
-    """Marca un mensaje como procesado. Devuelve False si ya lo estaba.
+
+def reclamar(wamid: str, mensaje: dict | None = None) -> bool:
+    """Marca un mensaje como en proceso. Devuelve False si ya estaba.
+
+    Guarda tambien el mensaje crudo: si el proceso se reinicia con la cola
+    llena —y con despliegue continuo un reinicio es cada actualizacion— esos
+    mensajes estaban solo en memoria y se perdian, ademas con su wamid ya
+    reclamado. Desde la base se pueden recuperar al arrancar.
 
     Ante un fallo de base de datos devuelve True: preferimos arriesgar un
     duplicado a perder un reporte de campo.
     """
+    fila = {"wamid": wamid}
+    if mensaje is not None:
+        fila["payload"] = mensaje
+
     try:
         resultado = (
             get_client()
             .table("mensajes_procesados")
-            .upsert({"wamid": wamid}, on_conflict="wamid", ignore_duplicates=True)
+            .upsert(fila, on_conflict="wamid", ignore_duplicates=True)
             .execute()
         )
     except Exception:
@@ -36,6 +51,58 @@ def reclamar(wamid: str) -> bool:
 
     # Con ignore_duplicates PostgREST no devuelve fila cuando ya existia.
     return bool(resultado.data)
+
+
+def marcar_procesado(wamid: str) -> None:
+    """Cierra el mensaje para que no se reintente al arrancar."""
+    try:
+        (
+            get_client()
+            .table("mensajes_procesados")
+            .update({"procesado_en": datetime.now(timezone.utc).isoformat()})
+            .eq("wamid", wamid)
+            .execute()
+        )
+    except Exception:
+        logger.exception("No se pudo cerrar el wamid %s", wamid)
+
+
+def pendientes(limite: int = 50) -> list[dict]:
+    """Mensajes reclamados que nunca llegaron a cerrarse.
+
+    Son los que estaban en la cola cuando el proceso murio. Se descartan los
+    que ya fallaron varias veces: si un mensaje tumba el proceso, reintentarlo
+    en cada arranque deja al agente en un bucle sin procesar nada mas.
+    """
+    try:
+        return (
+            get_client()
+            .table("mensajes_procesados")
+            .select("wamid, payload, intentos")
+            .is_("procesado_en", "null")
+            .not_.is_("payload", "null")
+            .lt("intentos", MAX_INTENTOS)
+            .order("recibido_en")
+            .limit(limite)
+            .execute()
+            .data
+        )
+    except Exception:
+        logger.exception("No se pudieron consultar los mensajes pendientes")
+        return []
+
+
+def contar_intento(wamid: str, intentos: int) -> None:
+    try:
+        (
+            get_client()
+            .table("mensajes_procesados")
+            .update({"intentos": intentos + 1})
+            .eq("wamid", wamid)
+            .execute()
+        )
+    except Exception:
+        logger.exception("No se pudo contar el intento del wamid %s", wamid)
 
 
 def liberar(wamid: str) -> None:

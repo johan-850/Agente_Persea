@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
 from app.db.supabase_client import get_client
+from app.horario import limites_utc
 from app.models.reporte import ReporteEntrada
 from app.services import storage_service
 from app.services.monitoreo_service import procesar_mensaje_monitoreo
@@ -16,11 +17,11 @@ def crear_monitoreo(entrada: ReporteEntrada):
 
 @router.get("/monitoreos")
 def listar_monitoreos(fecha: str | None = None):
+    """fecha es el dia en las fincas, no en UTC (ver app/horario.py)."""
     query = get_client().table("monitoreos").select("*")
     if fecha:
-        query = query.gte("fecha_hora", f"{fecha}T00:00:00").lte(
-            "fecha_hora", f"{fecha}T23:59:59"
-        )
+        desde, hasta = limites_utc(fecha)
+        query = query.gte("fecha_hora", desde).lt("fecha_hora", hasta)
     return query.order("fecha_hora", desc=True).execute().data
 
 
@@ -43,9 +44,8 @@ def listar_fotos(monitoreo_id: int | None = None, fecha: str | None = None):
     if monitoreo_id is not None:
         query = query.eq("monitoreo_id", monitoreo_id)
     if fecha:
-        query = query.gte("fecha_hora", f"{fecha}T00:00:00").lte(
-            "fecha_hora", f"{fecha}T23:59:59"
-        )
+        desde, hasta = limites_utc(fecha)
+        query = query.gte("fecha_hora", desde).lt("fecha_hora", hasta)
     return query.order("fecha_hora", desc=True).execute().data
 
 
