@@ -1,11 +1,13 @@
+import json
 import logging
 import os
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Depends, Request, Response
 from starlette.concurrency import run_in_threadpool
 
 logger = logging.getLogger("meta_webhook")
 
+from app.api.seguridad import verificar_firma_meta
 from app.services.cola_mensajes import encolar
 from app.services.fotos_service import procesar_foto
 from app.services.idempotencia_service import reclamar
@@ -54,17 +56,21 @@ def verificar_webhook_meta(request: Request):
 
 
 @router.post("/meta/webhook")
-async def recibir_mensaje_meta(request: Request):
+async def recibir_mensaje_meta(cuerpo: bytes = Depends(verificar_firma_meta)):
     """Confirma de inmediato y deja el trabajo pesado a la cola.
 
     Procesar aqui mismo tardaba entre 4 y 6 segundos por mensaje; Meta no
     alcanzaba a recibir el 200, reenviaba el evento y cada reenvio volvia a
     guardar el reporte y a repetir la alerta.
 
-    Nunca se devuelve 500: si el webhook falla seguido, Meta desactiva la
-    suscripcion y dejan de llegar los reportes.
+    El cuerpo llega como bytes desde la verificacion de firma, que necesita
+    los datos tal como los mando Meta.
+
+    Nunca se devuelve 500 por un fallo de procesamiento: si el webhook falla
+    seguido, Meta desactiva la suscripcion y dejan de llegar los reportes. La
+    firma invalida si corta antes, con 403, porque eso no viene de Meta.
     """
-    payload = await request.json()
+    payload = json.loads(cuerpo)
 
     for entry in payload.get("entry", []):
         waba_id = entry.get("id")

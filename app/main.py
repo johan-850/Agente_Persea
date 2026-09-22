@@ -18,16 +18,21 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
+from fastapi import Depends  # noqa: E402
+
 from app.api.routes_meta_whatsapp import router as meta_whatsapp_router  # noqa: E402
 from app.api.routes_monitoreo import router as monitoreo_router  # noqa: E402
 from app.api.routes_reportes import router as reportes_router  # noqa: E402
-from app.api.routes_whatsapp import router as whatsapp_router  # noqa: E402
+from app.api.seguridad import exigir_api_key  # noqa: E402
 from app.services.resumen_service import enviar_resumen_diario  # noqa: E402
 
 app = FastAPI(title="Agente de Monitoreo - Reportes de Campo")
-app.include_router(reportes_router)
-app.include_router(monitoreo_router)
-app.include_router(whatsapp_router)
+
+# Todo lo que lee o escribe datos va detras de la clave. El webhook de Meta no
+# puede llevarla —lo llama Meta, no nosotros— y se protege con la firma del
+# evento; /  queda abierto porque es el latido que consulta el tunel.
+app.include_router(reportes_router, dependencies=[Depends(exigir_api_key)])
+app.include_router(monitoreo_router, dependencies=[Depends(exigir_api_key)])
 app.include_router(meta_whatsapp_router)
 
 scheduler = BackgroundScheduler()

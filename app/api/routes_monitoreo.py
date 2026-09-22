@@ -4,6 +4,7 @@ from app.db.supabase_client import get_client
 from app.models.reporte import ReporteEntrada
 from app.services import storage_service
 from app.services.monitoreo_service import procesar_mensaje_monitoreo
+from app.services.resumen_service import enviar_resumen_diario
 
 router = APIRouter()
 
@@ -60,3 +61,13 @@ def enlace_foto(foto_id: int):
         raise HTTPException(status_code=404, detail="La foto no quedo archivada")
 
     return {"url": storage_service.url_firmada(ruta)}
+
+
+@router.post("/tareas/resumen-diario")
+def disparar_resumen_diario(fecha: str | None = None):
+    """Envia el resumen del dia a mano, sin esperar a la hora programada.
+
+    Estaba en la ruta de Twilio, que era publica: cualquiera podia disparar
+    el resumen a los administradores las veces que quisiera.
+    """
+    return {"enviado": True, "resumen": enviar_resumen_diario(fecha)}
