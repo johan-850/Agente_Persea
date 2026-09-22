@@ -95,7 +95,9 @@ def _completar_lote_pendiente(texto: str, remitente: str) -> bool:
         try:
             whatsapp_service.enviar_a_administradores(
                 f"📍 Complemento de la alerta de finca {finca}: corresponde al *lote {lote}*.\n"
-                f"{detalle}"
+                f"{detalle}",
+                tipo="complemento_lote",
+                referencia=f"monitoreo:{pendiente['id']}",
             )
         except Exception:
             logger.exception("No se pudo complementar la alerta del reporte %s", pendiente["id"])
@@ -293,4 +295,6 @@ def _notificar_alerta(monitoreo: dict) -> None:
         whatsapp_service.PLANTILLA_ALERTA,
         [prioridad, finca, lote, plagas, tipo_alerta, remitente],
         respaldo=respaldo,
+        tipo="alerta_reporte",
+        referencia=f"monitoreo:{monitoreo.get('id')}",
     )

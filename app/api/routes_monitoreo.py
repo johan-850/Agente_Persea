@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException
 from app.db.supabase_client import get_client
 from app.horario import limites_utc
 from app.models.reporte import ReporteEntrada
-from app.services import storage_service
+from app.services import envios_service, storage_service
 from app.services.monitoreo_service import procesar_mensaje_monitoreo
 from app.services.resumen_semanal_service import enviar_resumen_semanal
 from app.services.resumen_service import enviar_resumen_diario
@@ -62,6 +62,28 @@ def enlace_foto(foto_id: int):
         raise HTTPException(status_code=404, detail="La foto no quedo archivada")
 
     return {"url": storage_service.url_firmada(ruta)}
+
+
+@router.get("/envios")
+def listar_envios(fecha: str | None = None, estado: str | None = None):
+    """Que se le mando a los administradores y si llego."""
+    query = get_client().table("envios").select("*")
+    if fecha:
+        desde, hasta = limites_utc(fecha)
+        query = query.gte("fecha_hora", desde).lt("fecha_hora", hasta)
+    if estado:
+        query = query.eq("estado", estado)
+    return query.order("fecha_hora", desc=True).execute().data
+
+
+@router.get("/envios/sin-entregar")
+def listar_sin_entregar(horas: int = 24):
+    """Avisos que Meta acepto pero nunca confirmo haber entregado.
+
+    Es la consulta que importa: un aviso aqui es uno que el administrador
+    probablemente no vio.
+    """
+    return envios_service.sin_entregar(horas)
 
 
 @router.post("/tareas/resumen-diario")

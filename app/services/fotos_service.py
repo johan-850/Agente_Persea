@@ -225,6 +225,8 @@ def _notificar_dano_en_foto(
                 foto.get("remitente") or "desconocido",
             ],
             respaldo=respaldo,
+            tipo="alerta_foto",
+            referencia=f"foto:{foto.get('id')}",
         )
     except Exception:
         logger.exception("No se pudo avisar del dano visto en la foto %s", foto.get("id"))

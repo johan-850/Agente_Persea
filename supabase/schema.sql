@@ -103,3 +103,31 @@ alter table mensajes_procesados
 create index if not exists idx_mensajes_pendientes
     on mensajes_procesados (recibido_en)
     where procesado_en is null;
+
+-- Registro de lo que el agente manda a los administradores. Sin esto, una
+-- alerta que no se entrega deja solo una linea de log: el sistema existe para
+-- avisar y no habia forma de saber si el aviso llego.
+--
+-- wamid es el id que devuelve Meta al aceptar el mensaje. Por el webhook
+-- llegan despues los estados (sent, delivered, read, failed) y se cruzan con
+-- esta tabla, asi que el estado final dice si el administrador lo recibio de
+-- verdad, no solo si lo pusimos en la cola de Meta.
+create table if not exists envios (
+    id bigint generated always as identity primary key,
+    fecha_hora timestamptz not null default now(),
+    -- alerta_reporte, alerta_foto, resumen_diario, resumen_semanal
+    tipo text not null,
+    -- a que monitoreo o foto corresponde, para poder auditar un lote
+    referencia text,
+    destinatario text not null,
+    -- null cuando salio como texto libre porque la plantilla fallo
+    plantilla text,
+    wamid text,
+    -- aceptado -> enviado -> entregado -> leido, o fallido
+    estado text not null,
+    detalle text
+);
+
+create index if not exists idx_envios_wamid on envios (wamid);
+create index if not exists idx_envios_fecha on envios (fecha_hora);
+create index if not exists idx_envios_estado on envios (estado);

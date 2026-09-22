@@ -1,3 +1,17 @@
+"""FLUJO DORMIDO: reportes de labores (fertilizacion, aplicaciones, drench).
+
+Fue el alcance original del proyecto, antes de girar hacia los reportes de
+monitoreo de plagas, que es donde estaba el valor de alertar. Nada del webhook
+llega aqui: solo se alcanza por POST /reportes, que ya esta detras de la clave
+de la API.
+
+Ojo antes de reactivarlo: avisa por whatsapp_service, que es el cliente de
+Twilio, el proveedor que dejamos. Las credenciales TWILIO_* del .env estan
+vencidas, asi que este flujo fallaria al intentar enviar. Habria que pasarlo a
+meta_whatsapp_service, y de paso darle lo que el flujo de monitoreo ya tiene:
+reglas por lote, deduplicacion, cola y registro de envios.
+"""
+
 from datetime import datetime, timezone
 
 from app.db.supabase_client import get_client

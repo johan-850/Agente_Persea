@@ -174,5 +174,7 @@ def enviar_resumen_diario(fecha: str | None = None) -> str:
             _formatear_detalle_plano(monitoreos, fotos),
         ],
         respaldo=texto,
+        tipo="resumen_diario",
+        referencia=fecha,
     )
     return texto

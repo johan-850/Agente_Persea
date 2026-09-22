@@ -9,6 +9,8 @@ logger = logging.getLogger("meta_webhook")
 
 from app.api.seguridad import verificar_firma_meta
 from app.services.cola_mensajes import encolar, recuperar_pendientes
+from app.services import meta_whatsapp_service
+from app.services.envios_service import actualizar_estado
 from app.services.fotos_service import procesar_foto
 from app.services.idempotencia_service import reclamar
 from app.services.monitoreo_service import procesar_mensaje_monitoreo
@@ -26,13 +28,27 @@ def recuperar_cola() -> int:
     return recuperar_pendientes(_procesar_mensaje)
 
 
+# Lo que el agente aun no sabe leer, y como se lo explica a quien lo manda.
+# Antes se ignoraban sin decir nada: la monitora mandaba un video del daño,
+# no pasaba nada, y ella daba por hecho que habia quedado registrado.
+NO_SOPORTADO = {
+    "video": "los videos",
+    "audio": "las notas de voz",
+    "document": "los documentos",
+    "sticker": "los stickers",
+    "location": "las ubicaciones",
+    "contacts": "los contactos",
+}
+
+
 def _procesar_mensaje(mensaje: dict) -> None:
     numero = mensaje.get("from")
     if not numero:
         return
     remitente = f"whatsapp:+{numero}"
+    tipo = mensaje.get("type")
 
-    if mensaje.get("type") == "image":
+    if tipo == "image":
         imagen = mensaje.get("image", {})
         media_id = imagen.get("id")
         caption = imagen.get("caption")
@@ -45,9 +61,36 @@ def _procesar_mensaje(mensaje: dict) -> None:
         procesar_foto(media_id=media_id, remitente=remitente, caption=caption)
         return
 
-    texto = mensaje.get("text", {}).get("body")
-    if texto:
-        procesar_mensaje_monitoreo(texto=texto, remitente=remitente)
+    if tipo == "text":
+        texto = mensaje.get("text", {}).get("body")
+        if texto:
+            procesar_mensaje_monitoreo(texto=texto, remitente=remitente)
+        return
+
+    if tipo in NO_SOPORTADO:
+        _avisar_no_soportado(remitente, tipo)
+        return
+
+    logger.warning("Tipo de mensaje desconocido, se ignora: %r", tipo)
+
+
+def _avisar_no_soportado(remitente: str, tipo: str) -> None:
+    """Responde en vez de callar.
+
+    El caption de un video si se lee, porque llega como texto del mensaje; lo
+    que no se puede es mirar el video.
+    """
+    logger.info("Mensaje de tipo %s de %s: no se procesa, se avisa", tipo, remitente)
+    que = NO_SOPORTADO[tipo]
+    try:
+        meta_whatsapp_service.enviar_mensaje(
+            remitente,
+            f"Recibí tu mensaje, pero todavía no puedo leer {que}: solo texto y fotos.\n"
+            "Si el hallazgo se ve en una foto, mándamela y la reviso. "
+            "Si prefieres, escríbeme el reporte y lo registro igual.",
+        )
+    except Exception:
+        logger.exception("No se pudo avisar a %s sobre el %s", remitente, tipo)
 
 
 @router.get("/meta/webhook")
@@ -85,8 +128,21 @@ async def recibir_mensaje_meta(cuerpo: bytes = Depends(verificar_firma_meta)):
 
         for change in entry.get("changes", []):
             valor = change.get("value", {})
+            # Los acuses de entrega de lo que nosotros mandamos. Se cruzan
+            # con la tabla envios por el id que Meta asigno al aceptarlo, y
+            # son la unica forma de saber si la alerta llego al telefono del
+            # administrador y no solo a la cola de Meta.
             for estado in valor.get("statuses", []):
-                logger.debug("Estado de mensaje: %s", estado)
+                wamid_envio = estado.get("id")
+                if not wamid_envio:
+                    continue
+                errores = estado.get("errors") or []
+                detalle = "; ".join(
+                    str(e.get("title") or e.get("message") or e) for e in errores
+                ) or None
+                await run_in_threadpool(
+                    actualizar_estado, wamid_envio, estado.get("status", ""), detalle
+                )
             for mensaje in valor.get("messages", []):
                 wamid = mensaje.get("id")
                 # run_in_threadpool: el cliente de Supabase es sincrono y

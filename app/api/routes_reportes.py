@@ -1,3 +1,9 @@
+"""FLUJO DORMIDO: ver app/services/reportes_service.py.
+
+Son los reportes de labores, no los de monitoreo de plagas. Ningun mensaje de
+WhatsApp llega aqui; la tabla 'reportes' no la escribe nadie mas.
+"""
+
 from fastapi import APIRouter
 
 from app.db.supabase_client import get_client

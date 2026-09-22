@@ -1,9 +1,16 @@
 import logging
 import os
+import time
 
 import httpx
 
+from app.services import envios_service
+
 logger = logging.getLogger("meta_whatsapp")
+
+# Un corte de red pasajero no es razon para perder una alerta.
+INTENTOS_ENVIO = 3
+ESPERA_REINTENTO_SEG = 2
 
 IDIOMA_PLANTILLA = "es"
 
@@ -61,25 +68,56 @@ def descargar_media(media_id: str) -> tuple[bytes, str]:
     return archivo.content, datos.get("mime_type", "image/jpeg")
 
 
-def enviar_mensaje(numero_destino: str, texto: str) -> None:
+def _enviar(payload: dict) -> str | None:
+    """Manda el mensaje y devuelve el identificador que asigna Meta.
+
+    Ese identificador es la llave para cruzar despues los acuses de entrega
+    que llegan por el webhook.
+
+    Se reintenta ante fallos de red porque un corte pasajero no es razon para
+    perder una alerta. Un rechazo de Meta (4xx) no se reintenta: la plantilla
+    no existe o el numero es invalido, y repetirlo da lo mismo.
+    """
+    ultimo_error = None
+    for intento in range(INTENTOS_ENVIO):
+        try:
+            respuesta = httpx.post(_url(), headers=_headers(), json=payload, timeout=30)
+            respuesta.raise_for_status()
+            mensajes = respuesta.json().get("messages") or [{}]
+            return mensajes[0].get("id")
+        except httpx.HTTPStatusError:
+            raise
+        except httpx.HTTPError as error:
+            ultimo_error = error
+            logger.warning(
+                "Fallo de red al enviar (intento %d de %d): %s",
+                intento + 1,
+                INTENTOS_ENVIO,
+                error,
+            )
+            if intento + 1 < INTENTOS_ENVIO:
+                time.sleep(ESPERA_REINTENTO_SEG * (intento + 1))
+
+    raise ultimo_error
+
+
+def enviar_mensaje(numero_destino: str, texto: str) -> str | None:
     """Mensaje libre. Solo se entrega si el destinatario le escribio al bot en
     las ultimas 24 horas (ventana de atencion de WhatsApp).
     """
-    payload = {
+    return _enviar({
         "messaging_product": "whatsapp",
         "to": _numero(numero_destino),
         "type": "text",
         "text": {"body": texto},
-    }
-    respuesta = httpx.post(_url(), headers=_headers(), json=payload, timeout=30)
-    respuesta.raise_for_status()
+    })
 
 
-def enviar_plantilla(numero_destino: str, nombre: str, parametros: list) -> None:
+def enviar_plantilla(numero_destino: str, nombre: str, parametros: list) -> str | None:
     """Plantilla aprobada por Meta. A diferencia del mensaje libre, se entrega
     aunque el destinatario no haya escrito en las ultimas 24 horas.
     """
-    payload = {
+    return _enviar({
         "messaging_product": "whatsapp",
         "to": _numero(numero_destino),
         "type": "template",
@@ -95,9 +133,7 @@ def enviar_plantilla(numero_destino: str, nombre: str, parametros: list) -> None
                 }
             ],
         },
-    }
-    respuesta = httpx.post(_url(), headers=_headers(), json=payload, timeout=30)
-    respuesta.raise_for_status()
+    })
 
 
 def _administradores() -> list:
@@ -106,23 +142,74 @@ def _administradores() -> list:
     return obtener_numeros_administradores()
 
 
-def enviar_a_administradores(texto: str) -> None:
-    for numero in _administradores():
-        enviar_mensaje(numero, texto)
-
-
-def enviar_plantilla_a_administradores(nombre: str, parametros: list, respaldo: str) -> None:
-    """Envia la plantilla a cada administrador. Si la plantilla falla (aun sin
-    aprobar, sin metodo de pago, etc.) se intenta el mensaje libre como ultimo
-    recurso: llega solo si la ventana de 24h esta abierta, pero es preferible a
-    perder una alerta silenciosamente.
-    """
+def enviar_a_administradores(texto: str, tipo: str = "aviso", referencia: str | None = None) -> None:
     for numero in _administradores():
         try:
-            enviar_plantilla(numero, nombre, parametros)
-        except Exception:
-            logger.exception("Fallo la plantilla '%s' hacia %s, se intenta texto libre", nombre, numero)
-            try:
-                enviar_mensaje(numero, respaldo)
-            except Exception:
-                logger.exception("Tampoco se pudo enviar el texto libre hacia %s", numero)
+            wamid = enviar_mensaje(numero, texto)
+            envios_service.registrar(tipo, numero, "aceptado", wamid=wamid, referencia=referencia)
+        except Exception as error:
+            logger.exception("No se pudo enviar el aviso a %s", numero)
+            envios_service.registrar(
+                tipo, numero, "fallido", detalle=str(error), referencia=referencia
+            )
+
+
+def enviar_plantilla_a_administradores(
+    nombre: str,
+    parametros: list,
+    respaldo: str,
+    tipo: str = "aviso",
+    referencia: str | None = None,
+) -> None:
+    """Envia la plantilla a cada administrador y deja constancia del resultado.
+
+    Si la plantilla falla (sin aprobar, sin metodo de pago) se intenta el
+    mensaje libre: llega solo si la ventana de 24h esta abierta, pero es
+    preferible a perder una alerta en silencio.
+
+    Cada intento queda en la tabla envios. Lo que se guarda al enviar es
+    "aceptado", que solo dice que Meta lo recibio; el estado real lo traen
+    despues los acuses por webhook.
+    """
+    numeros = _administradores()
+
+    if not numeros:
+        # El bucle sobre una lista vacia no hacia nada y no se notaba: la
+        # alerta simplemente no existia para nadie.
+        logger.error(
+            "No hay administradores activos: el aviso '%s' no tiene a quien ir", tipo
+        )
+        envios_service.registrar(
+            tipo, "(sin administradores)", "fallido",
+            detalle="No hay administradores activos en la tabla", referencia=referencia,
+        )
+        return
+
+    for numero in numeros:
+        try:
+            wamid = enviar_plantilla(numero, nombre, parametros)
+            envios_service.registrar(
+                tipo, numero, "aceptado", plantilla=nombre, wamid=wamid, referencia=referencia
+            )
+            continue
+        except Exception as error:
+            logger.warning(
+                "Fallo la plantilla '%s' hacia %s (%s), se intenta texto libre",
+                nombre, numero, error,
+            )
+            fallo_plantilla = str(error)
+
+        try:
+            wamid = enviar_mensaje(numero, respaldo)
+            envios_service.registrar(
+                tipo, numero, "aceptado", wamid=wamid,
+                detalle=f"texto libre; la plantilla fallo: {fallo_plantilla}",
+                referencia=referencia,
+            )
+        except Exception as error:
+            logger.exception("Tampoco se pudo enviar el texto libre hacia %s", numero)
+            envios_service.registrar(
+                tipo, numero, "fallido", plantilla=nombre,
+                detalle=f"plantilla: {fallo_plantilla} | texto libre: {error}",
+                referencia=referencia,
+            )

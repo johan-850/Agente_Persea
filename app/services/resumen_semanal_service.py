@@ -203,5 +203,7 @@ def enviar_resumen_semanal(fecha: str | None = None) -> str:
             _detalle_plano(monitoreos, fotos),
         ],
         respaldo=texto,
+        tipo="resumen_semanal",
+        referencia=f"{lunes}/{viernes}",
     )
     return texto
