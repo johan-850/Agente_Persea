@@ -18,7 +18,7 @@ import base64
 import logging
 import os
 
-from app.services.ia_service import get_client
+from app.services.anthropic_client import get_client
 from app.services.monitoreo_ia_service import CATALOGO_PLAGAS
 
 logger = logging.getLogger("vision")

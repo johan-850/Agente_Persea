@@ -1,10 +1,13 @@
 """Reglas duras de alerta para reportes de monitoreo de plagas.
 
-Distintas de alertas_service.py (labor): en monitoreo la palabra "daño" es
-vocabulario rutinario (aparece en casi todo hallazgo normal), asi que NO se
-usa como disparador aqui. En cambio "activo" es el marcador que el propio
-equipo de monitoreo usa para senalar un foco urgente (ej. "foco de escamas
-ACTIVO"), y es una senal mucho mas confiable en este dominio.
+En monitoreo la palabra "daño" es vocabulario rutinario —aparece en casi todo
+hallazgo normal— asi que NO se usa como disparador. En cambio "activo" es el
+marcador que el propio equipo usa para senalar un foco urgente (ej. "foco de
+escamas ACTIVO"), y es una senal mucho mas confiable en este dominio.
+
+Estas reglas existen ademas del criterio del modelo porque aqui un falso
+negativo cuesta caro: una cuarentenaria que pasa desapercibida sigue
+extendiendose. El modelo puede equivocarse; la lista del plan no.
 
 Las plagas cuarentenarias tienen umbral de dano 0% segun el PLAN MIPE: basta
 su presencia, sin importar como se describa.
@@ -14,7 +17,7 @@ import logging
 import re
 import unicodedata
 
-from app.services.alertas_service import (
+from app.services.plan_mipe import (
     GRUPOS_SIN_ESPECIE,
     PALABRAS_ACCIDENTE,
     PLAGAS_CUARENTENARIAS,
@@ -147,9 +150,10 @@ def hallazgos_que_alertan(plagas: list | None) -> list:
 
 
 def evaluar_alerta_monitoreo(texto: str) -> tuple[bool, str | None, str | None]:
-    """Devuelve (es_alerta, tipo_alerta, prioridad) segun el texto completo
-    del mensaje. Ver alertas_service.evaluar_alerta para la justificacion de
-    por que existen reglas duras ademas del criterio de la IA.
+    """Devuelve (es_alerta, tipo_alerta, prioridad) para el texto que se le pase.
+
+    Se evalua por lote, no sobre el mensaje entero: un mensaje suele cubrir
+    varios lotes y evaluarlo completo contagiaba la alerta a todos.
     """
     texto_normalizado = normalizar(texto)
 

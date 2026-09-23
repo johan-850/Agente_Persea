@@ -4,6 +4,8 @@ supabase==2.7.4
 anthropic>=0.40.0
 python-dotenv==1.0.1
 pydantic==2.9.2
-twilio==9.3.2
 apscheduler==3.10.4
 python-multipart==0.0.9
+# zoneinfo necesita la base de datos de husos horarios, que Windows no trae y
+# las imagenes slim de Linux tampoco. Sin esto, America/Bogota no resuelve.
+tzdata>=2024.1

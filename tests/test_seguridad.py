@@ -93,7 +93,8 @@ def main() -> int:
     comprobar("token incorrecto se rechaza", r.status_code, 403)
 
     print("\nAPI REST: cerrada sin la clave")
-    for ruta in ("/monitoreos", "/alertas-monitoreo", "/fotos", "/reportes", "/alertas"):
+    for ruta in ("/monitoreos", "/alertas-monitoreo", "/fotos", "/envios",
+                 "/envios/sin-entregar"):
         comprobar(f"GET {ruta} sin clave", cliente.get(ruta).status_code, 401)
 
     comprobar("POST /monitoreos sin clave (inyectaba reportes)",
@@ -110,9 +111,13 @@ def main() -> int:
     print("\nLO QUE SIGUE ABIERTO A PROPOSITO")
     comprobar("GET / (latido del tunel)", cliente.get("/").status_code, 200)
 
-    print("\nRUTA MUERTA DE TWILIO, ELIMINADA")
-    comprobar("POST /whatsapp/webhook ya no existe",
+    print("\nRUTAS ELIMINADAS")
+    comprobar("POST /whatsapp/webhook (webhook de Twilio) ya no existe",
               cliente.post("/whatsapp/webhook", data={"From": "x", "Body": "y"}).status_code, 404)
+    # El flujo de labores se quito: el proyecto abarca solo monitoreo.
+    for ruta in ("/reportes", "/alertas", "/resumen-dia"):
+        comprobar(f"GET {ruta} (flujo de labores) ya no existe",
+                  cliente.get(ruta).status_code, 404)
 
     fallos = resultados.count(False)
     print()

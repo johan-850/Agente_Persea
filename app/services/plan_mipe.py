@@ -1,10 +1,15 @@
-"""Reglas duras de alerta. Se aplican ademas del criterio de la IA para
-no depender solo del modelo en algo critico (falsos negativos son costosos).
+"""Datos del PLAN MIPE de Agricola Persea (aguacate Hass).
+
+Es el documento que define que plagas son cuarentenarias y con que umbral se
+actua. Aqui vive solo el dato; las reglas que lo usan estan en
+alertas_monitoreo_service.
+
+Antes esto estaba dentro de alertas_service.py, junto a las reglas del flujo
+de labores que ya no existe.
 """
 
-# Plagas cuarentenarias del PLAN MIPE de Agricola Persea (aguacate Hass).
-# Umbral de dano 0%: cualquier presencia genera accion de manejo, sin importar
-# si el reporte la describe como foco activo o no.
+# Plagas cuarentenarias: umbral de dano 0%. Cualquier presencia genera accion
+# de manejo, sin importar si el reporte la describe como foco activo o no.
 #
 # Se incluyen nombre cientifico, genero y nombre comun porque las monitoras
 # escriben indistintamente ("stenoma en rama", "barrenador de tallo").
@@ -45,14 +50,6 @@ GRUPOS_SIN_ESPECIE = [
     "piojo harinoso",
 ]
 
-FRASES_FOCO_ACTIVO = [
-    "foco activo",
-    "continua activo",
-    "sigue activo",
-    "daños",
-    "danos",
-]
-
 PALABRAS_ACCIDENTE = [
     "accidente",
     "herido",
@@ -61,27 +58,3 @@ PALABRAS_ACCIDENTE = [
     "lesión",
     "emergencia",
 ]
-
-
-def evaluar_alerta(texto: str) -> tuple[bool, str | None, str | None]:
-    """Devuelve (es_alerta, tipo_alerta, prioridad) basado en reglas duras.
-
-    No reemplaza la clasificacion de la IA: si la IA marca alerta pero las
-    reglas no encuentran nada, se respeta igual el criterio de la IA aguas
-    arriba (ver ia_service). Esta funcion sirve para forzar alerta aunque
-    la IA no la haya detectado.
-    """
-    texto_normalizado = texto.lower()
-
-    for plaga in PLAGAS_CUARENTENARIAS:
-        if plaga in texto_normalizado:
-            for frase in FRASES_FOCO_ACTIVO:
-                if frase in texto_normalizado:
-                    return True, "plaga_cuarentenaria", "alta"
-            return True, "plaga_cuarentenaria", "media"
-
-    for palabra in PALABRAS_ACCIDENTE:
-        if palabra in texto_normalizado:
-            return True, "accidente", "alta"
-
-    return False, None, None

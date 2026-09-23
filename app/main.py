@@ -23,7 +23,6 @@ from fastapi import Depends  # noqa: E402
 from app.api.routes_meta_whatsapp import recuperar_cola  # noqa: E402
 from app.api.routes_meta_whatsapp import router as meta_whatsapp_router  # noqa: E402
 from app.api.routes_monitoreo import router as monitoreo_router  # noqa: E402
-from app.api.routes_reportes import router as reportes_router  # noqa: E402
 from app.api.seguridad import exigir_api_key  # noqa: E402
 from app.horario import JORNADA_FIN, JORNADA_INICIO, ZONA  # noqa: E402
 from app.services.resumen_semanal_service import enviar_resumen_semanal  # noqa: E402
@@ -34,7 +33,6 @@ app = FastAPI(title="Agente de Monitoreo - Reportes de Campo")
 # Todo lo que lee o escribe datos va detras de la clave. El webhook de Meta no
 # puede llevarla —lo llama Meta, no nosotros— y se protege con la firma del
 # evento; /  queda abierto porque es el latido que consulta el tunel.
-app.include_router(reportes_router, dependencies=[Depends(exigir_api_key)])
 app.include_router(monitoreo_router, dependencies=[Depends(exigir_api_key)])
 app.include_router(meta_whatsapp_router)
 

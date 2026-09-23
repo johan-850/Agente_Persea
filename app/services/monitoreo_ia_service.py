@@ -3,7 +3,7 @@ import os
 import re
 import unicodedata
 
-from app.services.ia_service import get_client
+from app.services.anthropic_client import get_client
 
 logger = logging.getLogger("monitoreo_ia")
 

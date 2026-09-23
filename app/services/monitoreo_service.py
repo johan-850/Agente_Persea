@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.db.supabase_client import get_client
 from app.horario import hoy, limites_utc
+from app.services import consultas_service
 from app.services import meta_whatsapp_service as whatsapp_service
 from app.services.alertas_monitoreo_service import (
     evaluar_alerta_monitoreo,
@@ -200,6 +201,17 @@ def procesar_mensaje_monitoreo(texto: str, remitente: str) -> list[dict]:
         return []
 
     extraidos = extraer_reportes_monitoreo(texto)
+
+    if not extraidos:
+        # No es un reporte de campo. Si quien escribe es administrador, lo que
+        # mando es una pregunta sobre los datos.
+        #
+        # El enganche va aqui y no en el despachador porque es aqui donde ya
+        # se sabe que no era un reporte: decidirlo antes obligaria a clasificar
+        # el mensaje dos veces, una llamada al modelo de mas por cada mensaje.
+        if consultas_service.es_administrador(remitente):
+            consultas_service.responder(texto, remitente)
+        return []
 
     por_lote = [evaluar_alerta_monitoreo(_texto_del_lote(e)) for e in extraidos]
     algun_lote_alerto = any(alerta[0] for alerta in por_lote)
