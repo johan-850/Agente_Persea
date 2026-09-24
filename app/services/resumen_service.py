@@ -1,3 +1,5 @@
+from collections import Counter
+
 from app.db.supabase_client import get_client
 from app.horario import hoy, limites_utc
 from app.services import meta_whatsapp_service as whatsapp_service
@@ -43,14 +45,40 @@ def _fotos_por_reporte(fotos: list[dict]) -> dict:
     resumen: dict = {}
     for foto in fotos:
         entrada = resumen.setdefault(
-            foto.get("monitoreo_id"), {"total": 0, "con_dano": 0, "candidatas": set()}
+            foto.get("monitoreo_id"), {"total": 0, "con_dano": 0, "candidatas": Counter()}
         )
         entrada["total"] += 1
         if foto.get("es_alerta"):
             entrada["con_dano"] += 1
-            for candidata in foto.get("plagas_sugeridas") or []:
-                entrada["candidatas"].add(str(candidata))
+            # Se cuenta en cuantas fotos aparece cada una, no se juntan en un
+            # conjunto: lo que dice algo es que se repita, no que aparezca.
+            for candidata in set(str(c) for c in foto.get("plagas_sugeridas") or []):
+                entrada["candidatas"][candidata] += 1
     return resumen
+
+
+def _resumir_candidatas(conteo: Counter, con_dano: int) -> str:
+    """Las candidatas que valen la pena nombrar.
+
+    Cada foto propone las suyas por separado. Juntandolas todas, un lote con
+    cinco fotos dañadas terminaba listando diez especies —practicamente el
+    catalogo cuarentenario entero— y eso no dice nada: quien lo lee aprende a
+    saltarselo.
+
+    Lo que aporta señal es la repeticion. Si tres de cinco fotos apuntan a
+    Heilipus, eso es un indicio; una sola foto que menciona Saissetia entre
+    otras nueve es ruido. Asi que se nombran las que se repiten, con en cuantas
+    fotos salieron; y si ninguna se repite, unas pocas sin presumir de nada.
+    """
+    if not conteo:
+        return ""
+
+    repetidas = [(c, n) for c, n in conteo.most_common() if n >= 2]
+    if repetidas:
+        partes = [f"{c} ({n} de {con_dano})" for c, n in repetidas[:3]]
+        return "sobre todo " + ", ".join(partes)
+
+    return "posibles: " + ", ".join(c for c, _ in conteo.most_common(2))
 
 
 def _texto_fotos(entrada: dict | None) -> str:
@@ -60,8 +88,9 @@ def _texto_fotos(entrada: dict | None) -> str:
         return f" [{entrada['total']} foto(s)]"
 
     detalle = f" [{entrada['total']} foto(s), {entrada['con_dano']} con daño"
-    if entrada["candidatas"]:
-        detalle += f"; compatible con {', '.join(sorted(entrada['candidatas']))}"
+    candidatas = _resumir_candidatas(entrada["candidatas"], entrada["con_dano"])
+    if candidatas:
+        detalle += f"; {candidatas}"
     return detalle + "]"
 
 
