@@ -43,9 +43,11 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 from app.services.meta_whatsapp_service import (  # noqa: E402
     IDIOMA_PLANTILLA,
     PLANTILLA_ALERTA,
-    PLANTILLA_RESUMEN,
-    PLANTILLA_SEMANAL,
+    PLANTILLAS_RESUMEN,
+    PLANTILLAS_SEMANAL,
 )
+
+PIE = "Agente de monitoreo - Agricola Persea"
 
 WABA_ID = os.environ.get("META_WABA_ID")
 PHONE_ID = os.environ.get("META_PHONE_NUMBER_ID")
@@ -91,74 +93,77 @@ PLANTILLAS = [
             {"type": "FOOTER", "text": "Agente de monitoreo - Agricola Persea"},
         ],
     },
-    # {{1}} fecha   {{2}} reportes del dia   {{3}} cuantos alertaron   {{4}} detalle
+    # RESUMEN DIARIO
+    # {{1}} fecha  {{2}} reportes  {{3}} con alerta  {{4}} que atender  {{5}} cobertura
     # resumen_service.enviar_resumen_diario
-    {
-        "name": PLANTILLA_RESUMEN,
-        "language": IDIOMA_PLANTILLA,
-        "category": "UTILITY",
-        "components": [
-            {
-                "type": "HEADER",
-                "format": "TEXT",
-                "text": "Resumen diario de monitoreo",
-            },
-            {
-                "type": "BODY",
-                "text": (
-                    "Cierre de jornada del {{1}}. Se registraron {{2}} reportes de "
-                    "lote, de los cuales {{3}} generaron alerta.\n\n"
-                    "Detalle: {{4}}\n\n"
-                    "Consulte el historial completo en el sistema."
-                ),
-                "example": {
-                    "body_text": [[
-                        "2026-09-21",
-                        "4",
-                        "2",
-                        "Rivera lote 6 (finalizado): stenoma en rama, acaro; buena vista "
-                        "lote 5 (finalizado): alta poblacion de acaro, bruggmaniella",
-                    ]]
-                },
-            },
-            {"type": "FOOTER", "text": "Agente de monitoreo - Agricola Persea"},
-        ],
-    },
-    # {{1}} periodo   {{2}} reportes de la semana   {{3}} cuantos alertaron
-    # {{4}} dispersion de las cuarentenarias y cobertura
-    # resumen_semanal_service.enviar_resumen_semanal
     #
-    # Va aparte de la diaria porque aquella dice "registrados el {{1}}", y con
-    # un rango de fechas quedaria "registrados el 22 al 26 de septiembre".
+    # Cinco huecos y no uno. WhatsApp no admite saltos de linea DENTRO de un
+    # parametro, asi que con un solo hueco todo el detalle salia amontonado en
+    # una linea y cortado a media palabra a los 300 caracteres. La estructura
+    # tiene que estar en el cuerpo; los parametros, cortos.
     {
-        "name": PLANTILLA_SEMANAL,
+        "name": PLANTILLAS_RESUMEN[0],
         "language": IDIOMA_PLANTILLA,
         "category": "UTILITY",
         "components": [
-            {
-                "type": "HEADER",
-                "format": "TEXT",
-                "text": "Resumen semanal de monitoreo",
-            },
+            {"type": "HEADER", "format": "TEXT", "text": "Resumen diario de monitoreo"},
             {
                 "type": "BODY",
                 "text": (
-                    "Cierre de la semana del {{1}}. Se registraron {{2}} reportes de "
-                    "lote, de los cuales {{3}} generaron alerta.\n\n"
-                    "Resumen: {{4}}\n\n"
+                    "Cierre de jornada del {{1}}.\n\n"
+                    "Reportes de lote: {{2}}\n"
+                    "Con alerta: {{3}}\n\n"
+                    "Requieren atencion:\n{{4}}\n\n"
+                    "Cobertura del dia:\n{{5}}\n\n"
                     "Consulte el detalle por lote en el sistema."
                 ),
                 "example": {
                     "body_text": [[
-                        "22 al 26 de septiembre",
-                        "47",
-                        "8",
-                        "Stenoma catenifer en 5 lote(s); Heilipus (barrenadores) en 2 lote(s); "
-                        "23 lotes monitoreados, 57 fotos con daño",
+                        "2026-09-24",
+                        "6",
+                        "1",
+                        "la linda lote 5 - cochinillas",
+                        "alfa 2 lotes, la linda 4 lotes",
                     ]]
                 },
             },
-            {"type": "FOOTER", "text": "Agente de monitoreo - Agricola Persea"},
+            {"type": "FOOTER", "text": PIE},
+        ],
+    },
+    # RESUMEN SEMANAL
+    # {{1}} periodo  {{2}} reportes  {{3}} con alerta
+    # {{4}} dispersion de las cuarentenarias  {{5}} cobertura por finca
+    # resumen_semanal_service.enviar_resumen_semanal
+    #
+    # Va aparte de la diaria porque el encabezado cambia: "cierre de jornada"
+    # frente a "cierre de la semana".
+    {
+        "name": PLANTILLAS_SEMANAL[0],
+        "language": IDIOMA_PLANTILLA,
+        "category": "UTILITY",
+        "components": [
+            {"type": "HEADER", "format": "TEXT", "text": "Resumen semanal de monitoreo"},
+            {
+                "type": "BODY",
+                "text": (
+                    "Cierre de la semana del {{1}}.\n\n"
+                    "Reportes de lote: {{2}}\n"
+                    "Con alerta: {{3}}\n\n"
+                    "Cuarentenarias de la semana:\n{{4}}\n\n"
+                    "Cobertura por finca:\n{{5}}\n\n"
+                    "Consulte el detalle por lote en el sistema."
+                ),
+                "example": {
+                    "body_text": [[
+                        "21 al 25 de septiembre",
+                        "44",
+                        "10",
+                        "Stenoma catenifer en 7 lotes; Heilipus en 2 lotes (ambos ACTIVOS)",
+                        "alfa 9 reportes en 7 lotes; la linda 18 en 11; rivera 8 en 6",
+                    ]]
+                },
+            },
+            {"type": "FOOTER", "text": PIE},
         ],
     },
 ]

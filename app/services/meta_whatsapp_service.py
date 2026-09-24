@@ -17,8 +17,16 @@ IDIOMA_PLANTILLA = "es"
 # Nombres exactos de las plantillas aprobadas en Meta. Si no coinciden, el envio
 # cae al respaldo de texto libre (que solo llega dentro de la ventana de 24h).
 PLANTILLA_ALERTA = "reporte_monitoreo_alerta"
-PLANTILLA_RESUMEN = "reporte_monitoreo_resumen"
-PLANTILLA_SEMANAL = "reporte_monitoreo_semanal"
+
+# Los resumenes tienen dos versiones. Las v2 reparten la informacion en cinco
+# huecos cortos en vez de meterla toda en uno: WhatsApp no admite saltos de
+# linea DENTRO de un parametro, asi que la estructura tiene que estar en el
+# cuerpo de la plantilla. Con un solo hueco, el detalle salia amontonado en una
+# linea y cortado a media palabra a los 300 caracteres.
+#
+# Se intentan en orden: si la v2 todavia no esta aprobada, entra la vieja.
+PLANTILLAS_RESUMEN = ["reporte_monitoreo_resumen_v2", "reporte_monitoreo_resumen"]
+PLANTILLAS_SEMANAL = ["reporte_monitoreo_semanal_v2", "reporte_monitoreo_semanal"]
 
 # Limite defensivo por parametro: el cuerpo completo de una plantilla no puede
 # pasar de 1024 caracteres.
@@ -155,7 +163,7 @@ def enviar_a_administradores(texto: str, tipo: str = "aviso", referencia: str | 
 
 
 def enviar_plantilla_a_administradores(
-    nombre: str,
+    nombre,
     parametros: list,
     respaldo: str,
     tipo: str = "aviso",
@@ -163,14 +171,24 @@ def enviar_plantilla_a_administradores(
 ) -> None:
     """Envia la plantilla a cada administrador y deja constancia del resultado.
 
-    Si la plantilla falla (sin aprobar, sin metodo de pago) se intenta el
-    mensaje libre: llega solo si la ventana de 24h esta abierta, pero es
-    preferible a perder una alerta en silencio.
+    `nombre` y `parametros` pueden ser listas paralelas de candidatas, en orden
+    de preferencia. Sirve para estrenar una plantilla sin esperar a que Meta la
+    apruebe: se intenta la nueva y, si aun no esta lista, la que ya funciona.
+    Cada una lleva sus propios parametros porque no tienen por que coincidir en
+    numero de huecos.
+
+    Si ninguna plantilla pasa se intenta el mensaje libre: llega solo si la
+    ventana de 24h esta abierta, pero es preferible a perder una alerta en
+    silencio.
 
     Cada intento queda en la tabla envios. Lo que se guarda al enviar es
     "aceptado", que solo dice que Meta lo recibio; el estado real lo traen
     despues los acuses por webhook.
     """
+    candidatas = list(zip(nombre, parametros)) if isinstance(nombre, (list, tuple)) else [
+        (nombre, parametros)
+    ]
+
     numeros = _administradores()
 
     if not numeros:
@@ -186,18 +204,26 @@ def enviar_plantilla_a_administradores(
         return
 
     for numero in numeros:
-        try:
-            wamid = enviar_plantilla(numero, nombre, parametros)
-            envios_service.registrar(
-                tipo, numero, "aceptado", plantilla=nombre, wamid=wamid, referencia=referencia
-            )
+        enviada = False
+        fallo_plantilla = ""
+
+        for plantilla, params in candidatas:
+            try:
+                wamid = enviar_plantilla(numero, plantilla, params)
+                envios_service.registrar(
+                    tipo, numero, "aceptado",
+                    plantilla=plantilla, wamid=wamid, referencia=referencia,
+                )
+                enviada = True
+                break
+            except Exception as error:
+                logger.warning(
+                    "Fallo la plantilla '%s' hacia %s (%s)", plantilla, numero, error
+                )
+                fallo_plantilla = f"{plantilla}: {error}"
+
+        if enviada:
             continue
-        except Exception as error:
-            logger.warning(
-                "Fallo la plantilla '%s' hacia %s (%s), se intenta texto libre",
-                nombre, numero, error,
-            )
-            fallo_plantilla = str(error)
 
         try:
             wamid = enviar_mensaje(numero, respaldo)
@@ -209,7 +235,7 @@ def enviar_plantilla_a_administradores(
         except Exception as error:
             logger.exception("Tampoco se pudo enviar el texto libre hacia %s", numero)
             envios_service.registrar(
-                tipo, numero, "fallido", plantilla=nombre,
+                tipo, numero, "fallido", plantilla=candidatas[0][0],
                 detalle=f"plantilla: {fallo_plantilla} | texto libre: {error}",
                 referencia=referencia,
             )

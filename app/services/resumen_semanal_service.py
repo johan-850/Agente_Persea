@@ -159,6 +159,38 @@ def formatear(desde: str, hasta: str, monitoreos: list[dict], fotos: list[dict])
     return "\n".join(lineas)
 
 
+def _dispersion(monitoreos: list[dict]) -> str:
+    """En cuantos lotes aparecio cada cuarentenaria, y si alguno estaba ACTIVO.
+
+    Es lo unico que el administrador no puede deducir de los cinco resumenes
+    diarios que ya recibio, asi que va en su propio hueco de la plantilla.
+    """
+    grupos = _cuarentenarias_de_la_semana(monitoreos)
+    if not grupos:
+        return "ninguna esta semana"
+
+    partes = []
+    for plaga, donde in sorted(grupos.items(), key=lambda x: -len(x[1])):
+        activos = sum(1 for esta_activo in donde.values() if esta_activo)
+        detalle = f"{plaga} en {len(donde)} lote(s)"
+        if activos:
+            detalle += f", {activos} ACTIVO(S)"
+        partes.append(detalle)
+    return " | ".join(partes)
+
+
+def _cobertura(monitoreos: list[dict], fotos: list[dict]) -> str:
+    """Cuanto se monitoreo en cada finca durante la semana."""
+    partes = []
+    for finca, datos in sorted(_por_finca(monitoreos).items()):
+        partes.append(f"{finca} {datos['reportes']} reportes en {len(datos['lotes'])} lotes")
+
+    con_dano = sum(1 for f in fotos if f.get("es_alerta"))
+    if fotos:
+        partes.append(f"{len(fotos)} fotos, {con_dano} con daño")
+    return "; ".join(partes) or "sin reportes"
+
+
 def _detalle_plano(monitoreos: list[dict], fotos: list[dict]) -> str:
     """Version corta para el parametro de plantilla, que se corta en 300.
 
@@ -194,13 +226,16 @@ def enviar_resumen_semanal(fecha: str | None = None) -> str:
         lunes, viernes, len(monitoreos), len(alertas), len(fotos),
     )
 
+    comunes = [rango_legible(lunes, viernes), str(len(monitoreos)), str(len(alertas))]
+
     whatsapp_service.enviar_plantilla_a_administradores(
-        whatsapp_service.PLANTILLA_SEMANAL,
+        whatsapp_service.PLANTILLAS_SEMANAL,
         [
-            rango_legible(lunes, viernes),
-            str(len(monitoreos)),
-            str(len(alertas)),
-            _detalle_plano(monitoreos, fotos),
+            # v2: la dispersion de las cuarentenarias y la cobertura van en
+            # huecos distintos, que es como se leen.
+            comunes + [_dispersion(monitoreos), _cobertura(monitoreos, fotos)],
+            # v1: las dos cosas juntas en un hueco.
+            comunes + [_detalle_plano(monitoreos, fotos)],
         ],
         respaldo=texto,
         tipo="resumen_semanal",

@@ -158,6 +158,34 @@ def _formatear_detalle_plano(monitoreos: list[dict], fotos: list[dict] | None = 
     return "; ".join(describir(m) for m in [*con_alerta, *resto])
 
 
+def _lotes_que_atender(monitoreos: list[dict]) -> str:
+    """Los lotes con alerta y que la disparo. Uno por lote, lo mas corto posible."""
+    alertas = [m for m in monitoreos if m.get("es_alerta")]
+    if not alertas:
+        return "ninguno"
+
+    partes = []
+    for item in alertas:
+        finca = item.get("finca") or "finca sin especificar"
+        lote = item.get("lote") or "no indicado"
+        partes.append(f"{finca} lote {lote} - {_motivo_corto(item, maximo=55)}")
+    return " | ".join(partes)
+
+
+def _cobertura(monitoreos: list[dict], fotos: list[dict] | None = None) -> str:
+    """Cuanto se vio en cada finca. Va en su propio hueco de la plantilla."""
+    por_finca: dict[str, set] = {}
+    for item in monitoreos:
+        finca = item.get("finca") or "finca sin especificar"
+        por_finca.setdefault(finca, set()).add(item.get("lote") or "?")
+
+    partes = [f"{finca} {len(lotes)} lote(s)" for finca, lotes in sorted(por_finca.items())]
+    con_dano = sum(1 for f in (fotos or []) if f.get("es_alerta"))
+    if fotos:
+        partes.append(f"{len(fotos)} foto(s), {con_dano} con daño")
+    return ", ".join(partes) or "sin reportes"
+
+
 def enviar_resumen_diario(fecha: str | None = None) -> str:
     fecha = fecha or hoy()
     monitoreos = _monitoreos_del_dia(fecha)
@@ -165,13 +193,16 @@ def enviar_resumen_diario(fecha: str | None = None) -> str:
     texto = _formatear_resumen(fecha, monitoreos, fotos)
     alertas = [item for item in monitoreos if item.get("es_alerta")]
 
+    comunes = [fecha, str(len(monitoreos)), str(len(alertas))]
+
     whatsapp_service.enviar_plantilla_a_administradores(
-        whatsapp_service.PLANTILLA_RESUMEN,
+        whatsapp_service.PLANTILLAS_RESUMEN,
         [
-            fecha,
-            str(len(monitoreos)),
-            str(len(alertas)),
-            _formatear_detalle_plano(monitoreos, fotos),
+            # v2: cada cosa en su hueco, con el cuerpo de la plantilla poniendo
+            # los saltos de linea que un parametro no puede llevar.
+            comunes + [_lotes_que_atender(monitoreos), _cobertura(monitoreos, fotos)],
+            # v1: todo en un solo hueco, por si la v2 aun no esta aprobada.
+            comunes + [_formatear_detalle_plano(monitoreos, fotos)],
         ],
         respaldo=texto,
         tipo="resumen_diario",
