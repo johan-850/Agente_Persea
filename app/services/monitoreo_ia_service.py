@@ -127,10 +127,13 @@ Para cada lote extrae:
 - nota: contexto adicional relevante que no encaje en los campos anteriores
   (interrupciones por clima, transiciones entre lotes, conteos especificos
   como numero de larvas encontradas, etc). Puede ser null.
-- es_alerta: true SOLO por una de estas tres razones, y ninguna otra:
+- es_alerta: true SOLO por una de estas cuatro razones, y ninguna otra:
     (a) una de las ocho plagas CUARENTENARIAS del catalogo aparece en ESE lote,
-    (b) el reporte marca un foco como "ACTIVO" en ESE lote,
-    (c) hay un accidente o una persona herida.
+    (b) se nombra una cochinilla o una escama sin decir la especie. En aguacate
+        Hass no hay ninguna que no sea cuarentenaria: cinco de las ocho del
+        plan lo son, asi que "se observan cochinillas" cuenta como (a),
+    (c) el reporte marca un foco como "ACTIVO" en ESE lote,
+    (d) hay un accidente o una persona herida.
   Una poblacion alta, una severidad 4 o mucho daño NO son alerta si la plaga
   no es cuarentenaria: son hallazgos rutinarios que van al resumen diario.
   Copturomimus perseae, acaro, mosca blanca, trips, monalonion, bruggmanniella

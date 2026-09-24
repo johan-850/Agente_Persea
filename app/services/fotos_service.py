@@ -8,10 +8,17 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 
 from app.db.supabase_client import get_client
-from app.services import meta_whatsapp_service, storage_service, vision_service
+from app.services import (
+    envios_service,
+    meta_whatsapp_service,
+    storage_service,
+    vision_service,
+)
 from app.services.alertas_monitoreo_service import DANOS_RELEVANTES, evaluar_dano_en_foto
 
 logger = logging.getLogger("fotos")
+
+TIPO_PREGUNTA_FOTOS = "pregunta_lote_foto"
 
 # Las monitoras mandan la foto en un mensaje aparte del texto, casi siempre
 # seguido. Se busca el ultimo reporte de esa misma persona en esta ventana.
@@ -23,6 +30,12 @@ VENTANA_ASOCIACION = timedelta(hours=2)
 # esta ventana se avisa una vez y las demas fotos quedan registradas en la
 # base, donde se pueden consultar todas juntas.
 VENTANA_AVISO_REPETIDO = timedelta(minutes=30)
+
+# Cuando llegan fotos sueltas y esa persona reporto varios lotes seguidos, la
+# heuristica no tiene forma de saber a cual pertenecen: se las cuelga todas al
+# ultimo. Un dia las 25 fotos de la jornada acabaron en el lote 15. En vez de
+# adivinar se pregunta, una sola vez por tanda.
+VENTANA_PREGUNTA_FOTOS = timedelta(minutes=30)
 
 EXTENSIONES = {
     "image/jpeg": "jpg",
@@ -86,6 +99,102 @@ def _ya_hubo_aviso_reciente(monitoreo: dict | None, remitente: str) -> bool:
         consulta = consulta.eq("remitente", remitente).is_("monitoreo_id", "null")
 
     return bool(consulta.limit(1).execute().data)
+
+
+def _lotes_candidatos(remitente: str) -> list[dict]:
+    """Los lotes distintos que esa persona reporto dentro de la ventana."""
+    desde = (datetime.now(timezone.utc) - VENTANA_ASOCIACION).isoformat()
+    filas = (
+        get_client()
+        .table("monitoreos")
+        .select("id, finca, lote")
+        .eq("remitente", remitente)
+        .gte("fecha_hora", desde)
+        .order("fecha_hora", desc=True)
+        .execute()
+        .data
+    )
+    vistos, candidatos = set(), []
+    for f in filas:
+        clave = (f.get("finca"), f.get("lote"))
+        if f.get("lote") and clave not in vistos:
+            vistos.add(clave)
+            candidatos.append(f)
+    return candidatos
+
+
+def _ya_se_pregunto_por_fotos(remitente: str) -> bool:
+    """Si ya se le pregunto por esta tanda de fotos.
+
+    Se mira en envios, que es donde queda registrado todo lo que manda el
+    agente: con 25 fotos seguidas, preguntar por cada una seria insufrible.
+    """
+    desde = (datetime.now(timezone.utc) - VENTANA_PREGUNTA_FOTOS).isoformat()
+    filas = (
+        get_client()
+        .table("envios")
+        .select("id")
+        .eq("tipo", TIPO_PREGUNTA_FOTOS)
+        .eq("destinatario", remitente)
+        .gte("fecha_hora", desde)
+        .limit(1)
+        .execute()
+        .data
+    )
+    return bool(filas)
+
+
+def _preguntar_de_que_lote_son(remitente: str, candidatos: list[dict]) -> None:
+    opciones = ", ".join(
+        f"{c.get('finca') or 'sin finca'} {c['lote']}" for c in candidatos[:8]
+    )
+    texto = (
+        "Recibí tus fotos, pero no vienen con texto y hoy reportaste varios lotes, "
+        "así que no sé a cuál corresponden.\n"
+        f"¿De qué lote son? Reportaste: {opciones}.\n"
+        "Puedes responderme solo con el número."
+    )
+    try:
+        wamid = meta_whatsapp_service.enviar_mensaje(remitente, texto)
+        envios_service.registrar(
+            TIPO_PREGUNTA_FOTOS, remitente, "aceptado", wamid=wamid,
+            detalle=f"{len(candidatos)} lotes posibles",
+        )
+        logger.info("Se pregunto a %s de que lote son las fotos", remitente)
+    except Exception:
+        logger.exception("No se pudo preguntar a %s por el lote de las fotos", remitente)
+
+
+def fotos_sin_confirmar(remitente: str) -> list[dict]:
+    """Fotos recientes de esa persona que llegaron sueltas, sin texto."""
+    desde = (datetime.now(timezone.utc) - VENTANA_PREGUNTA_FOTOS).isoformat()
+    return (
+        get_client()
+        .table("fotos")
+        .select("id, monitoreo_id, storage_path")
+        .eq("remitente", remitente)
+        .is_("caption", "null")
+        .gte("fecha_hora", desde)
+        .execute()
+        .data
+    )
+
+
+def reasignar_fotos(remitente: str, monitoreo: dict) -> int:
+    """Cuelga del lote indicado las fotos sueltas recientes. Devuelve cuantas."""
+    fotos = fotos_sin_confirmar(remitente)
+    pendientes = [f for f in fotos if f.get("monitoreo_id") != monitoreo["id"]]
+    if not pendientes:
+        return 0
+
+    get_client().table("fotos").update({"monitoreo_id": monitoreo["id"]}).in_(
+        "id", [f["id"] for f in pendientes]
+    ).execute()
+    logger.info(
+        "Se reasignaron %d fotos de %s al monitoreo %s",
+        len(pendientes), remitente, monitoreo["id"],
+    )
+    return len(pendientes)
 
 
 def _ruta_archivo(monitoreo: dict | None, media_id: str, mime_type: str) -> str:
@@ -156,6 +265,14 @@ def procesar_foto(media_id: str, remitente: str, caption: str | None = None) -> 
     }
 
     guardada = get_client().table("fotos").insert(registro).execute().data[0]
+
+    # Foto suelta, sin texto, y esa persona reporto varios lotes: la
+    # asociacion es una apuesta. Se pregunta antes que colgarla del lote
+    # equivocado, que despues nadie corrige porque nadie lo nota.
+    if not caption:
+        candidatos = _lotes_candidatos(remitente)
+        if len(candidatos) > 1 and not _ya_se_pregunto_por_fotos(remitente):
+            _preguntar_de_que_lote_son(remitente, candidatos)
 
     if motivo_alerta:
         # Si el reporte escrito ya genero alerta, el administrador ya fue

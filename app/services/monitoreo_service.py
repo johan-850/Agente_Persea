@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.db.supabase_client import get_client
 from app.horario import hoy, limites_utc
-from app.services import consultas_service
+from app.services import consultas_service, fotos_service
 from app.services import meta_whatsapp_service as whatsapp_service
 from app.services.alertas_monitoreo_service import (
     evaluar_alerta_monitoreo,
@@ -63,6 +63,44 @@ def _reporte_sin_lote_reciente(remitente: str) -> dict | None:
     return filas[0] if filas else None
 
 
+def _asignar_lote_a_fotos(lote: str, remitente: str) -> bool:
+    """Cuelga del lote indicado las fotos sueltas que llegaron sin texto.
+
+    Devuelve True si el mensaje se consumio como respuesta, para no guardarlo
+    ademas como reporte.
+    """
+    desde, _ = limites_utc(hoy())
+    destino = (
+        get_client()
+        .table("monitoreos")
+        .select("id, finca, lote")
+        .eq("remitente", remitente)
+        .eq("lote", str(lote))
+        .gte("fecha_hora", desde)
+        .order("fecha_hora", desc=True)
+        .limit(1)
+        .execute()
+        .data
+    )
+    if not destino:
+        return False
+
+    monitoreo = destino[0]
+    cuantas = fotos_service.reasignar_fotos(remitente, monitoreo)
+    if not cuantas:
+        return False
+
+    finca = monitoreo.get("finca") or "sin finca"
+    try:
+        whatsapp_service.enviar_mensaje(
+            remitente,
+            f"Listo, quedaron {cuantas} foto(s) asociadas a finca {finca}, lote {lote}.",
+        )
+    except Exception:
+        logger.exception("No se pudo confirmar la asignacion de fotos a %s", remitente)
+    return True
+
+
 def _completar_lote_pendiente(texto: str, remitente: str) -> bool:
     """Si el mensaje responde al lote que pedimos, lo completa y avisa.
 
@@ -75,7 +113,8 @@ def _completar_lote_pendiente(texto: str, remitente: str) -> bool:
 
     pendiente = _reporte_sin_lote_reciente(remitente)
     if not pendiente:
-        return False
+        # Puede ser la respuesta a "¿de que lote son estas fotos?".
+        return _asignar_lote_a_fotos(lote, remitente)
 
     get_client().table("monitoreos").update({"lote": lote}).eq("id", pendiente["id"]).execute()
     finca = pendiente.get("finca") or "sin finca"

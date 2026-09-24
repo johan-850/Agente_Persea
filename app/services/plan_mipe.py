@@ -38,11 +38,21 @@ PLAGAS_CUARENTENARIAS = [
     "escama hemisferica",
 ]
 
-# Terminos de grupo que NO identifican especie. Una "escama" o una "cochinilla"
-# puede ser cuarentenaria (Ceroplastes, Saissetia, Pseudococcus, Maconellicoccus)
-# o no serlo, y del texto no hay forma de saberlo. Se alerta igual, pero con
-# menor prioridad y marcada como pendiente de confirmar en campo.
-GRUPOS_SIN_ESPECIE = [
+# Nombres de grupo que no dicen la especie, pero que en este cultivo son
+# cuarentenarios de todos modos.
+#
+# De las ocho plagas cuarentenarias del plan, CINCO son cochinillas o escamas:
+# Maconellicoccus hirsutus (cochinilla rosada), Pseudococcus jackbeardsleyi y
+# P. landoi (cochinillas harinosas), Ceroplastes rubens (escama cerosa roja) y
+# Saissetia batesi (escama hemisferica). Y en todo el catalogo del plan no
+# aparece ninguna cochinilla ni escama que NO sea cuarentenaria para aguacate
+# Hass.
+#
+# Por eso "se observan cochinillas", sin mas, se trata como cuarentenaria y no
+# como sospecha: por el plan, es presuntamente una de las cinco. Lo que queda
+# pendiente es cual, no si lo es. Antes esto alertaba con prioridad media y se
+# quedaba corto.
+GRUPOS_CUARENTENARIOS_SIN_ESPECIE = [
     "escama",
     "escamas",
     "cochinilla",

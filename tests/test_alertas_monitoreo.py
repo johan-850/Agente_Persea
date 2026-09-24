@@ -33,9 +33,18 @@ CASOS = [
         "lote #14: Un foco de escamas ACTIVO, Focos de Mosca blanca ACTIVO",
         True,
     ),
+    # Cinco de las ocho cuarentenarias del PLAN MIPE son cochinillas o escamas,
+    # y el plan no lista ninguna que no lo sea en aguacate Hass. Asi que un
+    # nombre de grupo sin especie va en alta igual: lo que falta por confirmar
+    # es cual de las cinco, no si es cuarentenaria.
     (
-        "Un grupo sin especie alerta, pero con menor prioridad",
+        "Una cochinilla sin especie es cuarentenaria por el plan",
         "lote #7 se observa presencia de cochinilla en pedunculos",
+        True,
+    ),
+    (
+        "Y una escama tambien",
+        "lote #12: se observan escamas en el enves de las hojas",
         True,
     ),
     (

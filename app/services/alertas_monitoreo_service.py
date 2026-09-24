@@ -18,7 +18,7 @@ import re
 import unicodedata
 
 from app.services.plan_mipe import (
-    GRUPOS_SIN_ESPECIE,
+    GRUPOS_CUARENTENARIOS_SIN_ESPECIE,
     PALABRAS_ACCIDENTE,
     PLAGAS_CUARENTENARIAS,
 )
@@ -161,17 +161,18 @@ def evaluar_alerta_monitoreo(texto: str) -> tuple[bool, str | None, str | None]:
         if plaga in texto_normalizado:
             return True, "plaga_cuarentenaria", "alta"
 
+    # Cochinillas y escamas sin especie. El plan no tiene ninguna que no sea
+    # cuarentenaria en aguacate Hass, asi que va en alta igual que las
+    # nombradas: lo que falta por confirmar es cual de las cinco, no si lo es.
+    for grupo in GRUPOS_CUARENTENARIOS_SIN_ESPECIE:
+        if re.search(rf"\b{grupo}\b", texto_normalizado):
+            return True, "plaga_cuarentenaria_sin_especie", "alta"
+
     for palabra in PALABRAS_ACCIDENTE:
         if normalizar(palabra) in texto_normalizado:
             return True, "accidente", "alta"
 
     if _PATRON_ACTIVO.search(texto_normalizado):
         return True, "foco_activo", "alta"
-
-    # Un grupo sin especie no confirma cuarentena, pero tampoco la descarta.
-    # Se avisa con menor prioridad para que se verifique en campo.
-    for grupo in GRUPOS_SIN_ESPECIE:
-        if re.search(rf"\b{grupo}\b", texto_normalizado):
-            return True, "posible_plaga_cuarentenaria", "media"
 
     return False, None, None
