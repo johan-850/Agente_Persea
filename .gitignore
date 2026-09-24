@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 .venv/
 .claude/
+
+# Logs de los procesos levantados con scripts/levantar.ps1
+logs/
