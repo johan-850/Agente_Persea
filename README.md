@@ -100,8 +100,9 @@ app/
 ├── db/supabase_client.py
 ├── models/reporte.py
 └── main.py
-supabase/schema.sql
-tests/test_alertas_monitoreo.py
+supabase/migraciones/               # SQL para dejar la base lista
+scripts/levantar.ps1                # arranca servidor y túnel
+tests/
 ```
 
 ## Puesta en marcha
@@ -116,12 +117,18 @@ pip install -r requirements.txt
 
 ### 2. Base de datos
 
-Ejecutar `supabase/schema.sql` en el SQL editor de Supabase y cargar los destinatarios de las alertas:
+Ejecutar en orden las migraciones de [`supabase/migraciones/`](supabase/migraciones) en el SQL editor de Supabase. Son idempotentes: correrlas sobre una base que ya las tiene no cambia nada. Crean las cinco tablas y el bucket privado de fotos.
+
+Después, cargar al menos un administrador. Sin esto el agente procesa todo y no avisa a nadie:
 
 ```sql
 insert into administradores (nombre, numero, activo)
 values ('Nombre Apellido', '+573001112233', true);
 ```
+
+Los administradores son además los únicos que pueden consultarle datos al bot por WhatsApp.
+
+El detalle de cada migración y lo que conviene saber de la base está en [`supabase/README.md`](supabase/README.md).
 
 ### 3. Variables de entorno
 
@@ -137,10 +144,13 @@ copy .env.example .env
 | `META_ACCESS_TOKEN` | Token de un **system user** sin expiración. Los del quickstart caducan en horas. |
 | `META_PHONE_NUMBER_ID` | Meta → app → WhatsApp → configuración. |
 | `META_VERIFY_TOKEN` | Cadena arbitraria; debe coincidir con la registrada en el webhook. |
+| `META_APP_SECRET` | Meta → app → Configuración → Básica. Sin esto el webhook acepta eventos sin verificar que vengan de Meta. |
+| `META_WABA_ID` | La cuenta de WhatsApp Business que contiene el número. Aparece en el log al llegar el primer mensaje. |
+| `API_TOKEN` | Clave para la API REST. Sin ella, la API queda cerrada. |
 | `SUPABASE_BUCKET_FOTOS` | Opcional. Bucket donde se archivan las fotos. Default `fotos-monitoreo`. |
-| `HORA_RESUMEN_DIARIO` | Hora (0-23) del resumen. Default `17`. |
+| `HORA_RESUMEN_DIARIO` | Hora (0-23) del resumen, en hora de Colombia. Default `18`. |
 
-Para las fotos, crear un bucket **privado** llamado `fotos-monitoreo` en Supabase → Storage.
+El bucket de fotos lo crea la migración `005`, privado. Las fotos muestran trabajadores y detalles de las fincas, así que no quedan detrás de una URL pública: el enlace se firma en el momento y vence.
 
 ### 4. Ejecutar
 
