@@ -35,7 +35,7 @@ Ese volumen de mensajes no se lee ni se consolida a mano, y los hallazgos urgent
 - **Separa por lote**: un mensaje que reporta dos lotes genera dos registros independientes.
 - **Alerta en el momento** cuando detecta una plaga cuarentenaria, un foco marcado como `ACTIVO` o un accidente.
 - **Archiva las fotos** de los daños, descritas y ligadas al reporte al que pertenecen.
-- **Consolida el día** en un resumen automático a la hora configurada.
+- **Consolida el día** en un resumen que sale de lunes a sábado a las 18:00, al cierre de la jornada. Los viernes, media hora después, va además el resumen de la semana: la dispersión de cada cuarentenaria por lote y qué lotes vienen alertando varios días.
 - **Guarda el histórico** en Postgres, consultable para reportes posteriores.
 
 Del mensaje de arriba, el agente produce dos registros:
@@ -63,7 +63,8 @@ Meta WhatsApp Cloud API
       │
       └──────────► Plantillas WhatsApp ──► Administradores
                                             · alerta inmediata
-                                            · resumen diario
+                                            · resumen diario (lun-sab 18:00)
+                                            · resumen semanal (vie 18:30)
 ```
 
 La detección de alertas es **doble**: la IA clasifica, y además se aplican reglas deterministas sobre el texto crudo. Un falso negativo en una plaga cuarentenaria cuesta mucho más que un falso positivo, así que basta con que una de las dos capas dispare.
@@ -148,7 +149,7 @@ copy .env.example .env
 | `META_WABA_ID` | La cuenta de WhatsApp Business que contiene el número. Aparece en el log al llegar el primer mensaje. |
 | `API_TOKEN` | Clave para la API REST. Sin ella, la API queda cerrada. |
 | `SUPABASE_BUCKET_FOTOS` | Opcional. Bucket donde se archivan las fotos. Default `fotos-monitoreo`. |
-| `HORA_RESUMEN_DIARIO` | Hora (0-23) del resumen, en hora de Colombia. Default `18`. |
+| `HORA_RESUMEN_DIARIO` | Hora (0-23) del resumen, en hora de Colombia. Default `18`. El diario sale a esa hora de lunes a sábado; el semanal, los viernes media hora después. |
 
 El bucket de fotos lo crea la migración `005`, privado. Las fotos muestran trabajadores y detalles de las fincas, así que no quedan detrás de una URL pública: el enlace se firma en el momento y vence.
 
@@ -170,8 +171,13 @@ En desarrollo, exponer el puerto (`ngrok http 8000`) y registrar `https://<domin
 | `GET` | `/alertas-monitoreo` | Monitoreos marcados como alerta. |
 | `GET` | `/fotos?monitoreo_id=&fecha=` | Fotos, filtrables por reporte o día. |
 | `GET` | `/fotos/{id}/enlace` | Enlace firmado y temporal para ver la foto. |
-| `POST` | `/tareas/resumen-diario` | Dispara el resumen manualmente. |
+| `GET` | `/envios` | Qué se le mandó a los administradores y si llegó. |
+| `GET` | `/envios/sin-entregar` | Avisos aceptados por Meta que nunca confirmaron entrega. |
+| `POST` | `/tareas/resumen-diario` | Dispara el resumen del día manualmente. |
+| `POST` | `/tareas/resumen-semanal` | Dispara el resumen de la semana manualmente. |
 | `GET` | `/` | Health check. |
+
+Todo menos `/meta/webhook` y `/` va detrás de la cabecera `X-API-Key`. El webhook no puede llevarla —lo llama Meta, no nosotros— y se protege con la firma del evento.
 
 ```bash
 curl -X POST http://127.0.0.1:8000/monitoreos \
@@ -229,14 +235,14 @@ Definidas en `app/services/alertas_monitoreo_service.py` y evaluadas sobre el te
 | Plaga cuarentenaria del PLAN MIPE | alta | Umbral de daño **0%**: cualquier presencia obliga a actuar, se describa como se describa. |
 | Accidente (`accidente`, `herido`, `lesión`…) | alta | — |
 | La palabra **`activo`** | alta | Es el marcador que el propio equipo usa para señalar un foco urgente (*"Un foco de escamas ACTIVO"*). |
-| Término de grupo sin especie (`escama`, `cochinilla`) | media | Puede ser cuarentenaria o no, y del texto no hay forma de saberlo. Se avisa para verificar en campo. |
+| Término de grupo sin especie (`escama`, `cochinilla`, `piojo harinoso`) | alta | **5 de las 8** cuarentenarias del plan son cochinillas o escamas, y el catálogo no tiene ninguna que *no* sea cuarentenaria en Hass. Lo que falta por confirmar es cuál de las cinco, no si lo es. |
 | Daño visible en una foto, o candidata cuarentenaria sugerida por la imagen | media | Se evalúa sobre lo que devuelve el análisis de la foto, no sobre el reporte escrito. Ver [Fotos](#fotos). |
 
 Las 8 plagas cuarentenarias del cultivo (aguacate Hass) son *Heilipus lauri*, *Heilipus elegans*, *Stenoma catenifer*, *Maconellicoccus hirsutus*, *Pseudococcus jackbeardsleyi*, *Pseudococcus landoi*, *Ceroplastes rubens* y *Saissetia batesi*. La comparación ignora mayúsculas y tildes, porque en campo se escribe indistintamente *ácaro*/*acaro* o *pseudocercóspora*/*pseudocercosphora*.
 
 **No disparan:** `daño` / `daños`. En monitoreo de plagas es vocabulario rutinario (*"daño por comedores de follaje"*) y marcaría casi todos los reportes, volviendo la alerta inútil.
 
-En mensajes multi-lote la regla se evalúa sobre el mensaje completo, de modo que un `ACTIVO` del lote B también marca al lote A. Es deliberado: se prefiere una alerta de más a una perdida, y el administrador recibe el contexto para distinguirlo.
+En mensajes multi-lote la regla se evalúa **por lote**, sobre el fragmento que habla de ese lote. Antes se evaluaba el mensaje completo y un `ACTIVO` del lote B marcaba también al lote A: el administrador recibía cinco lotes en alerta cuando el foco estaba en uno, y sin forma de saber en cuál. Queda una red de seguridad sobre el mensaje entero para lo que no se pudo repartir por lote, pero ya no contagia la prioridad.
 
 ## Restricciones de WhatsApp que condicionan el diseño
 

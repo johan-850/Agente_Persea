@@ -38,21 +38,37 @@ app.include_router(meta_whatsapp_router)
 
 scheduler = BackgroundScheduler()
 
+# Dias en que hay jornada de campo. El resumen diario es el cierre de la
+# jornada, asi que sin este filtro el domingo llegaba un "No se recibieron
+# reportes": un mensaje que no informa de nada y que enseña a no abrir el de
+# las 18:00, que es justo el que si hay que leer.
+DIAS_DE_JORNADA = "mon-sat"
 
-@app.on_event("startup")
-def iniciar_scheduler():
+
+def programar(planificador, hora: int) -> None:
+    """Registra los dos resumenes en el planificador que se le pase.
+
+    Va aparte del arranque para poder comprobar en que dias y a que hora
+    disparan sin levantar el servidor. La hora salia una hora antes de lo
+    acordado porque estaba puesta en el .env y ahi nadie la revisaba.
+    """
     # La hora es la de las fincas, no la del servidor. Sin timezone explicito,
     # un servidor en UTC dispararia el resumen de las 18:00 a las 13:00 de
     # Colombia, a media jornada y con la mitad de los reportes sin llegar.
-    hora = int(os.environ.get("HORA_RESUMEN_DIARIO", "18"))
-    scheduler.add_job(
-        enviar_resumen_diario, "cron", hour=hora, minute=0, timezone=ZONA, id="resumen_diario"
+    planificador.add_job(
+        enviar_resumen_diario,
+        "cron",
+        day_of_week=DIAS_DE_JORNADA,
+        hour=hora,
+        minute=0,
+        timezone=ZONA,
+        id="resumen_diario",
     )
 
     # El semanal sale media hora despues del diario del viernes, para que no
     # lleguen los dos pisados y se lean en orden: primero el dia, luego la
     # semana.
-    scheduler.add_job(
+    planificador.add_job(
         enviar_resumen_semanal,
         "cron",
         day_of_week="fri",
@@ -62,6 +78,11 @@ def iniciar_scheduler():
         id="resumen_semanal",
     )
 
+
+@app.on_event("startup")
+def iniciar_scheduler():
+    hora = int(os.environ.get("HORA_RESUMEN_DIARIO", "18"))
+    programar(scheduler, hora)
     scheduler.start()
 
     # Lo que quedo en la cola cuando murio el proceso anterior.
