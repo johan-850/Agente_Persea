@@ -196,7 +196,7 @@ def revisar_servidor(url: str) -> None:
         anotar("falla", "servidor", f"no responde ({type(error).__name__})")
         return
     if salud.status_code == 200 and salud.json().get("status") == "ok":
-        anotar("ok", "servidor", "responde")
+        anotar("ok", "servidor", f"responde, version {salud.json().get('version', '?')}")
     else:
         anotar("falla", "servidor", f"respondio {salud.status_code}")
         return

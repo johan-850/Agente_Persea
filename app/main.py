@@ -159,4 +159,6 @@ def detener_scheduler():
 
 @app.get("/")
 def health():
-    return {"status": "ok"}
+    # La version dice que commit responde: tras un push, es la forma de saber
+    # si el despliegue nuevo ya esta en linea o sigue el anterior.
+    return {"status": "ok", "version": config.VERSION[:7]}

@@ -58,6 +58,9 @@ _VARIABLES: dict[str, tuple[str, str | int]] = {
     "NIVEL_LOG": ("NIVEL_LOG", "INFO"),
     # Lo asigna la plataforma de despliegue; en local se usa el 8000.
     "PUERTO": ("PORT", 8000),
+    # El commit que esta corriendo. Railway lo pone en cada despliegue que sale
+    # de GitHub; sirve para confirmar que un cambio ya esta en linea.
+    "VERSION": ("RAILWAY_GIT_COMMIT_SHA", "local"),
 }
 
 # Sin estas el agente no hace su trabajo: no guarda, no lee o no avisa.

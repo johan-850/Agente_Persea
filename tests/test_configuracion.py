@@ -282,6 +282,13 @@ try:
 except RuntimeError:
     revisar("con todo configurado arranca", False, True)
 
+print("\nEL SERVIDOR DICE QUE VERSION CORRE")
+os.environ.pop("RAILWAY_GIT_COMMIT_SHA", None)
+revisar("en local dice local", main.health()["version"], "local")
+os.environ["RAILWAY_GIT_COMMIT_SHA"] = "6560f11c0ffee"
+revisar("desplegado dice el commit, corto", main.health()["version"], "6560f11")
+os.environ.pop("RAILWAY_GIT_COMMIT_SHA")
+
 
 def main() -> int:
     fallos = 0
