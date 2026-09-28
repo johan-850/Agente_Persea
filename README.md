@@ -35,6 +35,7 @@ Ese volumen de mensajes no se lee ni se consolida a mano, y los hallazgos urgent
 - **Separa por lote**: un mensaje que reporta dos lotes genera dos registros independientes.
 - **Alerta en el momento** cuando detecta una plaga cuarentenaria, un foco marcado como `ACTIVO` o un accidente.
 - **Archiva las fotos** de los daños, descritas y ligadas al reporte al que pertenecen.
+- **Muestra el reporte original.** El administrador que **responde a una alerta** en WhatsApp (mantener presionado → *Responder*, con cualquier texto) recibe el reporte tal como lo escribió la monitora y sus fotos, primero las de daño. También puede pedirlo por escrito: *"muéstrame el reporte original del 14 de rivera"*. El texto va tal cual, sin pasar por el modelo, que lo resumiría.
 - **Consolida el día** en un resumen que sale de lunes a sábado a las 18:00, al cierre de la jornada. Los viernes, media hora después, va además el resumen de la semana: la dispersión de cada cuarentenaria por lote y qué lotes vienen alertando varios días.
 - **Guarda el histórico** en Postgres, consultable para reportes posteriores.
 

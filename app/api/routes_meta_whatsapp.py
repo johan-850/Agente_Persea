@@ -15,6 +15,7 @@ from app.services.envios_service import actualizar_estado
 from app.services.fotos_service import procesar_foto
 from app.services.idempotencia_service import reclamar
 from app.services.monitoreo_service import procesar_mensaje_monitoreo
+from app.services.reporte_original_service import responder_a_mensaje_citado
 
 router = APIRouter()
 
@@ -63,6 +64,12 @@ def _procesar_mensaje(mensaje: dict) -> None:
         return
 
     if tipo == "text":
+        # Un administrador que responde a una alerta quiere ver su reporte.
+        # Se resuelve antes que nada: el texto de la respuesta ("ver", "?") no
+        # es un reporte ni una pregunta que el modelo sepa leer.
+        citado = (mensaje.get("context") or {}).get("id")
+        if citado and responder_a_mensaje_citado(citado, remitente):
+            return
         texto = mensaje.get("text", {}).get("body")
         if texto:
             procesar_mensaje_monitoreo(texto=texto, remitente=remitente)

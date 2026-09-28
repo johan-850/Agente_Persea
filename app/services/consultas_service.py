@@ -19,7 +19,10 @@ from datetime import datetime, timedelta, timezone
 
 from app.db.supabase_client import get_client
 from app.horario import ZONA, hoy, limites_utc
-from app.services import meta_whatsapp_service, modelo_ia
+from app.services import meta_whatsapp_service, modelo_ia, reporte_original_service
+# Vive en admin_service; se importa aqui porque monitoreo_service y las
+# pruebas lo buscan en este modulo.
+from app.services.admin_service import es_administrador  # noqa: F401
 
 logger = logging.getLogger("consultas")
 
@@ -195,6 +198,13 @@ CONSULTAS = {
     "reportes_del_dia": _reportes_del_dia,
 }
 
+# Las que no solo leen: le mandan algo a quien pregunto, asi que reciben su
+# numero. Mostrar el reporte original es una de estas porque el texto tiene que
+# llegar tal cual; si volviera al modelo para que lo redacte, lo resumiria.
+ACCIONES = {
+    "mostrar_reporte_original": reporte_original_service.mostrar_por_lote,
+}
+
 HERRAMIENTAS = [
     {
         "name": "estado_de_lote",
@@ -264,6 +274,27 @@ HERRAMIENTAS = [
             },
         },
     },
+    {
+        "name": "mostrar_reporte_original",
+        "description": (
+            "Le MANDA al administrador el reporte tal como lo escribio la monitora, "
+            "con sus fotos. Para 'muestrame el reporte del 14', 'quiero ver el "
+            "reporte original de la alerta de rivera', 'que escribio exactamente la "
+            "monitora en el 8' o 'mandame las fotos del lote 3'. El envio lo hace "
+            "la herramienta: tu solo confirmas en una linea."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "lote": {"type": "string", "description": "Solo el numero, sin '#'."},
+                "finca": {"type": ["string", "null"],
+                          "description": "la linda, alfa, buena vista o rivera. Null si no la dicen."},
+                "fecha": {"type": ["string", "null"],
+                          "description": "AAAA-MM-DD. Null = el reporte mas reciente de ese lote."},
+            },
+            "required": ["lote"],
+        },
+    },
 ]
 
 SYSTEM_PROMPT = """Eres el asistente de monitoreo de plagas de Agricola Persea,
@@ -271,6 +302,10 @@ una finca de aguacate Hass. Respondes por WhatsApp a los administradores, que
 preguntan por lo que reportaron las monitoras en campo.
 
 Las cuatro fincas son: la linda, alfa, buena vista y rivera.
+
+Un numero suelto ("el 15", "el #8", "en el 3") es un lote, nunca una fecha:
+asi hablan en campo. Si no dicen la finca, consulta sin ella en vez de
+preguntarla; las herramientas buscan el lote en todas las fincas.
 
 Para responder consulta los datos con las herramientas. Nunca inventes cifras
 ni hallazgos: si la consulta no devuelve nada, dilo con esas palabras.
@@ -282,25 +317,16 @@ Al responder:
 - Las plagas cuarentenarias del plan (Heilipus, Stenoma, Maconellicoccus,
   Pseudococcus, Ceroplastes, Saissetia) tienen umbral cero: si aparecen,
   dilo primero.
+- Si piden ver el reporte original, completo, "lo que escribio la monitora" o
+  las fotos de un lote, usa mostrar_reporte_original. La herramienta ya le
+  manda el texto tal cual y las fotos: no lo repitas ni lo resumas, solo
+  confirma en una linea que se envio (o di que no hay reporte de ese lote).
 - Si la pregunta no se puede responder con los datos de monitoreo, dilo en una
   linea y menciona que si puedes consultar: estado de un lote, alertas
-  recientes, donde ha salido una plaga, actividad por finca y lo reportado en
-  un dia.
+  recientes, donde ha salido una plaga, actividad por finca, lo reportado en
+  un dia, y el reporte original de un lote con sus fotos. Recuerda que tambien
+  pueden responder directamente a una alerta para ver su reporte.
 - No mas de 1200 caracteres."""
-
-
-def es_administrador(remitente: str) -> bool:
-    """Si ese numero esta en la tabla de administradores, activo."""
-    numero = "".join(c for c in str(remitente) if c.isdigit())
-    if not numero:
-        return False
-    try:
-        filas = get_client().table("administradores").select("numero").eq("activo", True).execute().data
-    except Exception:
-        logger.exception("No se pudo comprobar si %s es administrador", remitente)
-        return False
-
-    return any("".join(c for c in str(f["numero"]) if c.isdigit()) == numero for f in filas)
 
 
 def responder(pregunta: str, remitente: str) -> str | None:
@@ -312,6 +338,8 @@ def responder(pregunta: str, remitente: str) -> str | None:
     def ejecutar(nombre: str, argumentos: dict) -> dict:
         logger.info("Consulta de %s: %s(%s)", remitente, nombre, argumentos)
         try:
+            if nombre in ACCIONES:
+                return ACCIONES[nombre](destinatario=remitente, **argumentos)
             return CONSULTAS[nombre](**argumentos)
         except Exception as error:
             # El modelo recibe el error y puede decirlo, en vez de inventar.

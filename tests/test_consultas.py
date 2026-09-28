@@ -24,6 +24,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 from app.services import consultas_service  # noqa: E402
 from app.services.consultas_service import (  # noqa: E402
+    ACCIONES,
     CONSULTAS,
     HERRAMIENTAS,
     MAX_FILAS,
@@ -40,10 +41,12 @@ def revisar(descripcion, obtenido, esperado):
     CASOS.append((descripcion, obtenido, esperado))
 
 
-print("CADA HERRAMIENTA DECLARADA TIENE SU CONSULTA")
+print("CADA HERRAMIENTA DECLARADA TIENE SU CONSULTA O SU ACCION")
 declaradas = {h["name"] for h in HERRAMIENTAS}
-revisar("los nombres coinciden", declaradas, set(CONSULTAS))
-revisar("todas son invocables", all(callable(f) for f in CONSULTAS.values()), True)
+revisar("los nombres coinciden", declaradas, set(CONSULTAS) | set(ACCIONES))
+revisar("ninguna esta en los dos lados", set(CONSULTAS) & set(ACCIONES), set())
+revisar("todas son invocables",
+        all(callable(f) for f in [*CONSULTAS.values(), *ACCIONES.values()]), True)
 
 print("\nEL TOTAL VIAJA APARTE DE LA MUESTRA")
 estado = _estado_de_lote("18", "rivera")

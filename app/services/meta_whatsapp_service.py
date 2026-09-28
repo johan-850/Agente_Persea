@@ -120,6 +120,31 @@ def enviar_mensaje(numero_destino: str, texto: str) -> str | None:
     })
 
 
+# Limites de WhatsApp: 4096 caracteres por mensaje de texto y 1024 por leyenda
+# de imagen. Se deja margen en el texto para no cortar en el borde exacto.
+LARGO_MAXIMO_TEXTO = 4000
+LARGO_MAXIMO_LEYENDA = 1024
+
+
+def enviar_imagen(numero_destino: str, enlace: str, leyenda: str = "") -> str | None:
+    """Imagen por enlace. Como el texto libre, solo llega dentro de la ventana
+    de 24 horas.
+
+    Meta descarga la imagen del enlace al momento de enviarla, asi que basta
+    con que el enlace este vigente unos minutos: sirve uno firmado de Storage,
+    sin volver publico el bucket.
+    """
+    imagen = {"link": enlace}
+    if leyenda:
+        imagen["caption"] = leyenda[:LARGO_MAXIMO_LEYENDA]
+    return _enviar({
+        "messaging_product": "whatsapp",
+        "to": _numero(numero_destino),
+        "type": "image",
+        "image": imagen,
+    })
+
+
 def enviar_plantilla(numero_destino: str, nombre: str, parametros: list) -> str | None:
     """Plantilla aprobada por Meta. A diferencia del mensaje libre, se entrega
     aunque el destinatario no haya escrito en las ultimas 24 horas.
