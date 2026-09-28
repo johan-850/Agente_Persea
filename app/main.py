@@ -1,5 +1,4 @@
 import logging
-import os
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from dotenv import load_dotenv
@@ -7,13 +6,15 @@ from fastapi import FastAPI
 
 load_dotenv()
 
+from app import config  # noqa: E402
+
 # Uvicorn configura sus propios loggers y deja los nuestros sin handler, asi
 # que sin esto solo se veian los warnings. Se perdian justo las lineas que
 # sirven para auditar por que el agente decidio algo: el reenvio que se
 # descarto, el mensaje que no era un reporte, el patron de dano que se
 # descarto porque el modelo propuso candidatas no cuarentenarias.
 logging.basicConfig(
-    level=os.environ.get("NIVEL_LOG", "INFO"),
+    level=config.NIVEL_LOG,
     format="%(asctime)s %(levelname)-8s %(name)s | %(message)s",
     datefmt="%H:%M:%S",
 )
@@ -79,10 +80,28 @@ def programar(planificador, hora: int) -> None:
     )
 
 
+def revisar_configuracion() -> None:
+    """No arranca si falta algo obligatorio, y dice todo lo que falta junto.
+
+    Arrancar a medias es peor que no arrancar: sin la base, los reportes se
+    reciben, se confirman a Meta y se pierden; sin el token de WhatsApp, las
+    alertas se evaluan y no le llegan a nadie. En los dos casos el servidor
+    responde "ok" y nadie se entera hasta que falta un dato.
+    """
+    log = logging.getLogger("config")
+    revision = config.revisar()
+    if not revision.puede_arrancar:
+        log.error("El agente no puede arrancar.\n%s", revision.informe())
+        raise RuntimeError("Configuracion incompleta: " + ", ".join(revision.faltantes))
+    for aviso in revision.avisos:
+        log.warning(aviso)
+    log.info("Modelo: %s", config.MODELO_IA)
+
+
 @app.on_event("startup")
 def iniciar_scheduler():
-    hora = int(os.environ.get("HORA_RESUMEN_DIARIO", "18"))
-    programar(scheduler, hora)
+    revisar_configuracion()
+    programar(scheduler, config.HORA_RESUMEN_DIARIO)
     scheduler.start()
 
     # Lo que quedo en la cola cuando murio el proceso anterior.

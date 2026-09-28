@@ -19,9 +19,10 @@ Las dos puertas se tratan distinto a proposito:
 import hashlib
 import hmac
 import logging
-import os
 
 from fastapi import Header, HTTPException, Request
+
+from app import config
 
 logger = logging.getLogger("seguridad")
 
@@ -38,7 +39,7 @@ async def verificar_firma_meta(request: Request) -> bytes:
     devuelve el cuerpo y quien la usa parsea desde ahi.
     """
     cuerpo = await request.body()
-    secreto = os.environ.get("META_APP_SECRET")
+    secreto = config.META_APP_SECRET
 
     if not secreto:
         logger.warning(
@@ -63,7 +64,7 @@ async def verificar_firma_meta(request: Request) -> bytes:
 
 def exigir_api_key(x_api_key: str = Header(default="", alias=CABECERA_API)) -> None:
     """Protege los endpoints REST. Cerrada si no hay clave configurada."""
-    esperada = os.environ.get("API_TOKEN")
+    esperada = config.API_TOKEN
 
     if not esperada:
         logger.error("API_TOKEN sin configurar: la API REST queda cerrada")

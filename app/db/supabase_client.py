@@ -1,8 +1,9 @@
 import logging
-import os
 
 import httpx
 from supabase import Client, create_client
+
+from app import config
 
 logger = logging.getLogger("supabase_client")
 
@@ -40,9 +41,7 @@ def _ajustar_transporte(sesion, nombre: str) -> None:
 def get_client() -> Client:
     global _client
     if _client is None:
-        url = os.environ["SUPABASE_URL"]
-        key = os.environ["SUPABASE_KEY"]
-        _client = create_client(url, key)
+        _client = create_client(config.SUPABASE_URL, config.SUPABASE_KEY)
 
         for nombre, sesion in (
             ("postgrest", getattr(_client.postgrest, "session", None)),

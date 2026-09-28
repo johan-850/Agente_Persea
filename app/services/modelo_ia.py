@@ -21,6 +21,7 @@ cuarentenaria o no.
 """
 
 import base64
+import json
 import logging
 
 import anthropic
@@ -134,10 +135,11 @@ def conversar_con_herramientas(
 
     `ejecutar(nombre, argumentos) -> dict` corre la consulta que el modelo
     pida. Quien llama decide que consultas existen y que devuelven; aqui solo
-    se lleva la conversacion.
+    se lleva la conversacion, y se traduce el resultado al formato que espera
+    el proveedor.
 
-    Devuelve el texto final, o None si el modelo agoto las rondas sin
-    responder.
+    Devuelve el texto final, o None si el modelo agoto las rondas o respondio
+    en blanco.
     """
     mensajes: list[dict] = [{"role": "user", "content": pregunta}]
 
@@ -163,7 +165,9 @@ def conversar_con_herramientas(
             resultados.append({
                 "type": "tool_result",
                 "tool_use_id": bloque.id,
-                "content": ejecutar(bloque.name, bloque.input),
+                "content": json.dumps(
+                    ejecutar(bloque.name, bloque.input), ensure_ascii=False, default=str
+                ),
             })
         mensajes.append({"role": "user", "content": resultados})
 

@@ -1,9 +1,9 @@
 import logging
-import os
 import time
 
 import httpx
 
+from app import config
 from app.services import envios_service
 
 logger = logging.getLogger("meta_whatsapp")
@@ -34,12 +34,11 @@ MAX_LARGO_PARAMETRO = 300
 
 
 def _url() -> str:
-    phone_number_id = os.environ["META_PHONE_NUMBER_ID"]
-    return f"https://graph.facebook.com/v21.0/{phone_number_id}/messages"
+    return f"https://graph.facebook.com/v21.0/{config.META_PHONE_NUMBER_ID}/messages"
 
 
 def _headers() -> dict:
-    return {"Authorization": f"Bearer {os.environ['META_ACCESS_TOKEN']}"}
+    return {"Authorization": f"Bearer {config.META_ACCESS_TOKEN}"}
 
 
 def _numero(numero_destino: str) -> str:

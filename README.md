@@ -83,28 +83,39 @@ La detección de alertas es **doble**: la IA clasifica, y además se aplican reg
 
 ```
 app/
+├── config.py                     # TODA la configuración: qué existe, defectos, revisión al arrancar
+├── horario.py                    # el día de la finca (zona de Colombia, jornada)
 ├── api/
 │   ├── routes_meta_whatsapp.py   # webhook de Meta (verificación + recepción)
-│   ├── routes_monitoreo.py       # endpoints de monitoreo
-│   ├── routes_reportes.py        # flujo de labores (pausado)
-│   └── routes_whatsapp.py        # webhook de Twilio (legado)
+│   ├── routes_monitoreo.py       # API REST de consulta
+│   └── seguridad.py              # firma de Meta y clave de la API
 ├── services/
-│   ├── monitoreo_ia_service.py       # extracción con Claude (multi-lote)
+│   ├── modelo_ia.py                  # la ÚNICA puerta al modelo de lenguaje
+│   ├── monitoreo_ia_service.py       # extracción de reportes (multi-lote)
+│   ├── vision_service.py             # descripción de fotos
+│   ├── consultas_service.py          # preguntas de los administradores
 │   ├── monitoreo_service.py          # orquestación: extraer → guardar → alertar
 │   ├── alertas_monitoreo_service.py  # reglas deterministas de alerta
+│   ├── plan_mipe.py                  # catálogo del plan: cuarentenarias y grupos
 │   ├── fotos_service.py              # foto → descripción → archivo → reporte
-│   ├── vision_service.py             # descripción de imágenes
 │   ├── storage_service.py            # bucket privado de Supabase Storage
-│   ├── resumen_service.py            # consolidado diario
+│   ├── resumen_service.py            # resumen diario
+│   ├── resumen_semanal_service.py    # resumen de la semana
 │   ├── meta_whatsapp_service.py      # Cloud API: envío y descarga de media
+│   ├── envios_service.py             # si cada aviso llegó o no
+│   ├── cola_mensajes.py              # cola en segundo plano del webhook
+│   ├── idempotencia_service.py       # descarta los reenvíos de Meta
 │   └── admin_service.py              # destinatarios de las alertas
 ├── db/supabase_client.py
 ├── models/reporte.py
 └── main.py
 supabase/migraciones/               # SQL para dejar la base lista
 scripts/levantar.ps1                # arranca servidor y túnel
+scripts/crear_plantillas.py         # crea y revisa las plantillas en Meta
 tests/
 ```
+
+**Dos reglas que las pruebas vigilan** (`tests/test_configuracion.py`): solo `config.py` lee variables de entorno, y solo `modelo_ia.py` habla con el proveedor del modelo. Así, desplegar es llenar el `.env`, y cambiar de modelo es tocar un archivo.
 
 ## Puesta en marcha
 
@@ -142,6 +153,7 @@ copy .env.example .env
 | `SUPABASE_URL` | URL del proyecto. |
 | `SUPABASE_KEY` | Usar la **`service_role`** key. Con la `anon`, RLS bloquea los inserts. |
 | `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com) |
+| `MODELO_IA` | Opcional. Default `claude-haiku-4-5-20251001`. Cambia el modelo de las tres tareas a la vez; antes, correr `tests/` contra el nuevo, sobre todo las de fotos. |
 | `META_ACCESS_TOKEN` | Token de un **system user** sin expiración. Los del quickstart caducan en horas. |
 | `META_PHONE_NUMBER_ID` | Meta → app → WhatsApp → configuración. |
 | `META_VERIFY_TOKEN` | Cadena arbitraria; debe coincidir con la registrada en el webhook. |
@@ -150,6 +162,8 @@ copy .env.example .env
 | `API_TOKEN` | Clave para la API REST. Sin ella, la API queda cerrada. |
 | `SUPABASE_BUCKET_FOTOS` | Opcional. Bucket donde se archivan las fotos. Default `fotos-monitoreo`. |
 | `HORA_RESUMEN_DIARIO` | Hora (0-23) del resumen, en hora de Colombia. Default `18`. El diario sale a esa hora de lunes a sábado; el semanal, los viernes media hora después. |
+
+**Si falta algo obligatorio, el servidor no arranca** y dice en el log todo lo que falta de una vez. Arrancar a medias es peor: sin la base, los reportes se confirman a Meta y se pierden; sin el token de WhatsApp, las alertas se evalúan y no le llegan a nadie, y en los dos casos el servidor responde "ok". Lo recomendable (`META_APP_SECRET`, `API_TOKEN`, `META_WABA_ID`) no frena el arranque pero queda avisado.
 
 El bucket de fotos lo crea la migración `005`, privado. Las fotos muestran trabajadores y detalles de las fincas, así que no quedan detrás de una URL pública: el enlace se firma en el momento y vence.
 

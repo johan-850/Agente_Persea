@@ -1,12 +1,13 @@
+import hmac
 import json
 import logging
-import os
 
 from fastapi import APIRouter, Depends, Request, Response
 from starlette.concurrency import run_in_threadpool
 
 logger = logging.getLogger("meta_webhook")
 
+from app import config
 from app.api.seguridad import verificar_firma_meta
 from app.services.cola_mensajes import encolar, recuperar_pendientes
 from app.services import meta_whatsapp_service
@@ -96,9 +97,15 @@ def _avisar_no_soportado(remitente: str, tipo: str) -> None:
 @router.get("/meta/webhook")
 def verificar_webhook_meta(request: Request):
     params = request.query_params
-    if params.get("hub.mode") == "subscribe" and params.get(
-        "hub.verify_token"
-    ) == os.environ.get("META_VERIFY_TOKEN"):
+    esperado = config.META_VERIFY_TOKEN
+    # Sin token configurado no se verifica nada: si no, un token vacio en la
+    # peticion coincidiria con el vacio de la configuracion y cualquiera
+    # podria registrar el webhook.
+    if (
+        esperado
+        and params.get("hub.mode") == "subscribe"
+        and hmac.compare_digest(params.get("hub.verify_token", ""), esperado)
+    ):
         return Response(content=params.get("hub.challenge", ""), media_type="text/plain")
     return Response(status_code=403)
 

@@ -14,16 +14,12 @@ P. longispinus contando pares de filamentos de cera, y una es cuarentenaria y
 la otra no. La confirmacion la hace el agronomo en campo.
 """
 
-import base64
 import logging
-import os
 
-from app.services.anthropic_client import get_client
+from app.services import modelo_ia
 from app.services.monitoreo_ia_service import CATALOGO_PLAGAS
 
 logger = logging.getLogger("vision")
-
-MODEL = "claude-haiku-4-5-20251001"
 
 # Limite defensivo: la API rechaza imagenes muy grandes y las fotos de WhatsApp
 # rara vez pasan de 2 MB.
@@ -110,7 +106,7 @@ DESCRIPCION_TOOL = {
 def describir_foto(contenido: bytes, mime_type: str) -> dict | None:
     """Devuelve {descripcion, danos_observados, plagas_sugeridas}, o None si no
     se puede procesar."""
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    if not modelo_ia.hay_modelo():
         return None
 
     if mime_type not in MIME_SOPORTADOS:
@@ -121,42 +117,14 @@ def describir_foto(contenido: bytes, mime_type: str) -> dict | None:
         logger.warning("Foto de %s bytes, se omite la descripcion", len(contenido))
         return None
 
-    respuesta = get_client().messages.create(
-        model=MODEL,
-        max_tokens=600,
-        # Describir una foto es una tarea de observacion, no de redaccion. Con
-        # la temperatura por defecto la misma imagen daba veredictos distintos
-        # en cada pasada: una vez "perforaciones" y a la siguiente nada.
-        temperature=0,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": mime_type,
-                            "data": base64.b64encode(contenido).decode(),
-                        },
-                    },
-                    {"type": "text", "text": PROMPT},
-                ],
-            }
+    datos = modelo_ia.describir_imagen(contenido, mime_type, PROMPT, DESCRIPCION_TOOL, max_tokens=600)
+    if datos is None:
+        return None
+
+    return {
+        "descripcion": (datos.get("descripcion") or "").strip() or None,
+        "danos_observados": [
+            d for d in (datos.get("danos_observados") or []) if d in DANOS_VISIBLES
         ],
-        tools=[DESCRIPCION_TOOL],
-        tool_choice={"type": "tool", "name": "describir_foto"},
-    )
-
-    for bloque in respuesta.content:
-        if bloque.type == "tool_use":
-            datos = bloque.input
-            return {
-                "descripcion": (datos.get("descripcion") or "").strip() or None,
-                "danos_observados": [
-                    d for d in (datos.get("danos_observados") or []) if d in DANOS_VISIBLES
-                ],
-                "plagas_sugeridas": datos.get("plagas_sugeridas") or [],
-            }
-
-    return None
+        "plagas_sugeridas": datos.get("plagas_sugeridas") or [],
+    }

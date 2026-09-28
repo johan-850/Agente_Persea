@@ -13,15 +13,13 @@ comportamiento predecible, que en algo que responde por WhatsApp importa mas
 que la flexibilidad.
 """
 
-import json
 import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from app.db.supabase_client import get_client
 from app.horario import ZONA, hoy, limites_utc
-from app.services import meta_whatsapp_service
-from app.services.anthropic_client import MODEL, get_client as get_cliente_ia
+from app.services import meta_whatsapp_service, modelo_ia
 
 logger = logging.getLogger("consultas")
 
@@ -310,50 +308,35 @@ def responder(pregunta: str, remitente: str) -> str | None:
 
     Devuelve lo que respondio, o None si no se pudo.
     """
-    mensajes = [{"role": "user", "content": pregunta}]
+
+    def ejecutar(nombre: str, argumentos: dict) -> dict:
+        logger.info("Consulta de %s: %s(%s)", remitente, nombre, argumentos)
+        try:
+            return CONSULTAS[nombre](**argumentos)
+        except Exception as error:
+            # El modelo recibe el error y puede decirlo, en vez de inventar.
+            logger.exception("Fallo la consulta %s", nombre)
+            return {"error": str(error)}
 
     try:
-        for _ in range(MAX_RONDAS):
-            respuesta = get_cliente_ia().messages.create(
-                model=MODEL,
-                max_tokens=1200,
-                temperature=0,
-                system=SYSTEM_PROMPT,
-                messages=mensajes,
-                tools=HERRAMIENTAS,
-            )
-
-            if respuesta.stop_reason != "tool_use":
-                texto = "".join(b.text for b in respuesta.content if b.type == "text").strip()
-                return _enviar(texto, remitente) if texto else None
-
-            mensajes.append({"role": "assistant", "content": respuesta.content})
-            resultados = []
-            for bloque in respuesta.content:
-                if bloque.type != "tool_use":
-                    continue
-                logger.info("Consulta de %s: %s(%s)", remitente, bloque.name, bloque.input)
-                try:
-                    datos = CONSULTAS[bloque.name](**bloque.input)
-                except Exception as error:
-                    logger.exception("Fallo la consulta %s", bloque.name)
-                    datos = {"error": str(error)}
-                resultados.append({
-                    "type": "tool_result",
-                    "tool_use_id": bloque.id,
-                    "content": json.dumps(datos, ensure_ascii=False, default=str),
-                })
-            mensajes.append({"role": "user", "content": resultados})
-
-        logger.warning("La consulta de %s no se resolvio en %d rondas", remitente, MAX_RONDAS)
-        return _enviar(
-            "No pude resolver esa consulta. Prueba con algo mas concreto, "
-            "por ejemplo: ¿como va el lote 14 de rivera?",
-            remitente,
+        texto = modelo_ia.conversar_con_herramientas(
+            SYSTEM_PROMPT, pregunta, HERRAMIENTAS, ejecutar, max_rondas=MAX_RONDAS
         )
     except Exception:
         logger.exception("No se pudo responder la consulta de %s", remitente)
         return None
+
+    if texto:
+        return _enviar(texto, remitente)
+
+    # Agoto las rondas o respondio en blanco. Antes el segundo caso quedaba en
+    # silencio y el administrador no sabia si el bot lo habia leido.
+    logger.warning("La consulta de %s quedo sin respuesta tras %d rondas", remitente, MAX_RONDAS)
+    return _enviar(
+        "No pude resolver esa consulta. Prueba con algo mas concreto, "
+        "por ejemplo: ¿como va el lote 14 de rivera?",
+        remitente,
+    )
 
 
 def _enviar(texto: str, remitente: str) -> str:

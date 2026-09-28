@@ -1,13 +1,10 @@
 import logging
-import os
 import re
 import unicodedata
 
-from app.services.anthropic_client import get_client
+from app.services import modelo_ia
 
 logger = logging.getLogger("monitoreo_ia")
-
-MODEL = "claude-haiku-4-5-20251001"
 
 TIPOS_LABOR_MONITOREO = [
     "monitoreo general",
@@ -265,29 +262,20 @@ def extraer_reportes_monitoreo(texto: str) -> list[dict]:
     sobre el texto, asi que un administrador escribiendo "dejemos por ahora el
     stenoma de las ramas" disparaba una alerta de plaga cuarentenaria.
     """
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    if not modelo_ia.hay_modelo():
+        # Solo pasa en desarrollo: en el servidor, sin clave no se arranca.
         return [_extraccion_simulada(texto)]
 
-    respuesta = get_client().messages.create(
-        model=MODEL,
-        max_tokens=2048,
-        # Extraer campos de un reporte es determinista: el mismo texto debe
-        # dar siempre los mismos datos.
-        temperature=0,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": texto}],
-        tools=[REPORTE_MONITOREO_TOOL],
-        tool_choice={"type": "tool", "name": "extraer_reportes_monitoreo"},
-    )
-    for bloque in respuesta.content:
-        if bloque.type == "tool_use":
-            if not bloque.input.get("es_reporte_de_campo"):
-                logger.info("Mensaje descartado, no es un reporte: %r", texto[:120])
-                return []
-            reportes = bloque.input.get("reportes") or []
-            if not reportes:
-                # Dijo que si es reporte pero no extrajo lotes. Se guarda el
-                # texto crudo antes que perder un hallazgo.
-                return [_extraccion_simulada(texto)]
-            return [_normalizar(r) for r in reportes]
-    raise ValueError("Claude no devolvio una extraccion estructurada")
+    datos = modelo_ia.extraer(SYSTEM_PROMPT, texto, REPORTE_MONITOREO_TOOL, max_tokens=2048)
+    if datos is None:
+        raise ValueError("El modelo no devolvio una extraccion estructurada")
+
+    if not datos.get("es_reporte_de_campo"):
+        logger.info("Mensaje descartado, no es un reporte: %r", texto[:120])
+        return []
+    reportes = datos.get("reportes") or []
+    if not reportes:
+        # Dijo que si es reporte pero no extrajo lotes. Se guarda el texto
+        # crudo antes que perder un hallazgo.
+        return [_extraccion_simulada(texto)]
+    return [_normalizar(r) for r in reportes]
