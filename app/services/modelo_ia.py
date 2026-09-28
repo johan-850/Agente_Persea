@@ -58,6 +58,17 @@ def hay_modelo() -> bool:
     return bool(config.ANTHROPIC_API_KEY)
 
 
+def verificar_modelo() -> str:
+    """Comprueba que la clave sirve y que el modelo configurado existe.
+
+    No gasta tokens: consulta el catalogo de modelos. Detecta antes de
+    desplegar una clave mal copiada o un MODELO_IA con un error de tipeo, que
+    de otro modo solo se verian al llegar el primer reporte.
+    """
+    modelo = _obtener_cliente().models.retrieve(config.MODELO_IA)
+    return getattr(modelo, "display_name", None) or modelo.id
+
+
 def extraer(system: str, texto: str, herramienta: dict, max_tokens: int = 2048) -> dict | None:
     """Saca datos estructurados de un texto.
 

@@ -11,7 +11,7 @@ todos los reenvios, asi que sirve de llave.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.db.supabase_client import get_client
 
@@ -22,6 +22,13 @@ logger = logging.getLogger("idempotencia")
 # arranque y el agente no vuelve a procesar nada.
 MAX_INTENTOS = 3
 
+# Un pendiente mas nuevo que esto puede estar procesandose todavia: en la cola
+# de este proceso detras de una rafaga de fotos, o en el proceso viejo durante
+# un despliegue, que sigue vivo unos segundos mientras arranca el nuevo. Tomarlo
+# ahi lo procesaria dos veces. Ningun mensaje tarda tanto; una rafaga de 30
+# fotos se despacha en unos cuatro minutos.
+ANTIGUEDAD_PARA_RECUPERAR = timedelta(minutes=10)
+
 
 def reclamar(wamid: str, mensaje: dict | None = None) -> bool:
     """Marca un mensaje como en proceso. Devuelve False si ya estaba.
@@ -29,7 +36,7 @@ def reclamar(wamid: str, mensaje: dict | None = None) -> bool:
     Guarda tambien el mensaje crudo: si el proceso se reinicia con la cola
     llena —y con despliegue continuo un reinicio es cada actualizacion— esos
     mensajes estaban solo en memoria y se perdian, ademas con su wamid ya
-    reclamado. Desde la base se pueden recuperar al arrancar.
+    reclamado. Desde la base se recuperan al arrancar y cada pocos minutos.
 
     Ante un fallo de base de datos devuelve True: preferimos arriesgar un
     duplicado a perder un reporte de campo.
@@ -67,13 +74,18 @@ def marcar_procesado(wamid: str) -> None:
         logger.exception("No se pudo cerrar el wamid %s", wamid)
 
 
-def pendientes(limite: int = 50) -> list[dict]:
-    """Mensajes reclamados que nunca llegaron a cerrarse.
+def pendientes(
+    limite: int = 50, antiguedad: timedelta = ANTIGUEDAD_PARA_RECUPERAR
+) -> list[dict]:
+    """Mensajes reclamados que nunca llegaron a cerrarse, y que ya nadie esta
+    procesando.
 
-    Son los que estaban en la cola cuando el proceso murio. Se descartan los
-    que ya fallaron varias veces: si un mensaje tumba el proceso, reintentarlo
-    en cada arranque deja al agente en un bucle sin procesar nada mas.
+    Son los que estaban en la cola cuando el proceso murio, y los que fallaron
+    por algo pasajero: un corte con Supabase, el modelo saturado. Se descartan
+    los que ya fallaron varias veces: si un mensaje tumba el proceso,
+    reintentarlo sin fin deja al agente en un bucle sin procesar nada mas.
     """
+    corte = (datetime.now(timezone.utc) - antiguedad).isoformat()
     try:
         return (
             get_client()
@@ -82,6 +94,7 @@ def pendientes(limite: int = 50) -> list[dict]:
             .is_("procesado_en", "null")
             .not_.is_("payload", "null")
             .lt("intentos", MAX_INTENTOS)
+            .lt("recibido_en", corte)
             .order("recibido_en")
             .limit(limite)
             .execute()
@@ -92,30 +105,37 @@ def pendientes(limite: int = 50) -> list[dict]:
         return []
 
 
-def contar_intento(wamid: str, intentos: int) -> None:
+def tomar_para_reintento(wamid: str, intentos: int) -> bool:
+    """Cuenta el intento y se queda con el mensaje, si nadie lo tomo antes.
+
+    Es una comparacion-y-cambio: solo sube el contador si sigue en el valor
+    que se leyo. Si durante un despliegue los dos procesos intentan recuperar
+    el mismo mensaje, Postgres serializa los dos UPDATE y el segundo ya no
+    encuentra la fila con ese valor: no le devuelve nada y no lo procesa.
+
+    Ante un fallo de base devuelve False: el mensaje sigue pendiente y se
+    intenta en la proxima vuelta, que es mejor que procesarlo dos veces.
+    """
     try:
-        (
+        resultado = (
             get_client()
             .table("mensajes_procesados")
             .update({"intentos": intentos + 1})
             .eq("wamid", wamid)
+            .eq("intentos", intentos)
+            .is_("procesado_en", "null")
             .execute()
         )
     except Exception:
-        logger.exception("No se pudo contar el intento del wamid %s", wamid)
+        logger.exception("No se pudo tomar el wamid %s para reintentarlo", wamid)
+        return False
 
-
-def liberar(wamid: str) -> None:
-    """Suelta el wamid para que el mensaje se pueda volver a procesar.
-
-    Se reclama antes de procesar, no despues, porque si no los reenvios que
-    llegan mientras el mensaje aun se procesa lo duplicarian. El precio es que
-    un fallo dejaria el mensaje reclamado y perdido para siempre: ya paso una
-    vez, con un reporte de campo que murio en un corte de conexion con
-    Supabase.
-    """
-    try:
-        get_client().table("mensajes_procesados").delete().eq("wamid", wamid).execute()
-        logger.info("wamid %s liberado, se puede reprocesar", wamid)
-    except Exception:
-        logger.exception("No se pudo liberar el wamid %s", wamid)
+    if not resultado.data:
+        return False
+    if intentos + 1 >= MAX_INTENTOS:
+        logger.warning(
+            "Ultimo intento para el mensaje %s: si falla otra vez queda sin procesar "
+            "y hay que revisarlo a mano (procesado_en vacio en mensajes_procesados)",
+            wamid,
+        )
+    return True

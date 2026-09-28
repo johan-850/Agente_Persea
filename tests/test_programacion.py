@@ -87,6 +87,15 @@ revisar("el semanal sale despues del diario",
 revisar("media hora despues",
         (siguiente(semanal, "viernes") - siguiente(diario, "viernes")).seconds // 60, 30)
 
+print("\nLA RECUPERACION DE PENDIENTES CORRE SOLA")
+planificador = BackgroundScheduler()
+programar(planificador, 18)
+recuperacion = planificador.get_job("recuperar_pendientes")
+revisar("hay una tarea que busca mensajes a medias", recuperacion is not None, True)
+revisar("cada cinco minutos, no solo al arrancar",
+        recuperacion.trigger.interval.total_seconds(), 300)
+revisar("sin amontonar vueltas si una se demora", recuperacion.max_instances, 1)
+
 print("\nLA HORA ES LA QUE SE LE PASE")
 otro_diario, otro_semanal = disparos(hora=6)
 revisar("el diario obedece", siguiente(otro_diario, "lunes").hour, 6)

@@ -26,6 +26,7 @@ from app.api.routes_meta_whatsapp import router as meta_whatsapp_router  # noqa:
 from app.api.routes_monitoreo import router as monitoreo_router  # noqa: E402
 from app.api.seguridad import exigir_api_key  # noqa: E402
 from app.horario import JORNADA_FIN, JORNADA_INICIO, ZONA  # noqa: E402
+from app.services.cola_mensajes import en_cola, esperar_vaciado  # noqa: E402
 from app.services.resumen_semanal_service import enviar_resumen_semanal  # noqa: E402
 from app.services.resumen_service import enviar_resumen_diario  # noqa: E402
 
@@ -45,14 +46,34 @@ scheduler = BackgroundScheduler()
 # las 18:00, que es justo el que si hay que leer.
 DIAS_DE_JORNADA = "mon-sat"
 
+# Cada cuanto se buscan mensajes que quedaron sin procesar. Antes solo se
+# buscaban al arrancar: un mensaje que fallaba por un corte pasajero esperaba
+# hasta el siguiente reinicio, que en produccion pueden ser semanas.
+MINUTOS_ENTRE_RECUPERACIONES = 5
+
+# Al apagar, cuanto se espera a que la cola termine. Tiene que caber en el
+# drainingSeconds de railway.json (30): pasado ese plazo la plataforma mata el
+# proceso sin mas aviso.
+SEGUNDOS_PARA_VACIAR_AL_APAGAR = 25
+
 
 def programar(planificador, hora: int) -> None:
-    """Registra los dos resumenes en el planificador que se le pase.
+    """Registra las tareas periodicas en el planificador que se le pase.
 
     Va aparte del arranque para poder comprobar en que dias y a que hora
     disparan sin levantar el servidor. La hora salia una hora antes de lo
     acordado porque estaba puesta en el .env y ahi nadie la revisaba.
     """
+    planificador.add_job(
+        recuperar_cola,
+        "interval",
+        minutes=MINUTOS_ENTRE_RECUPERACIONES,
+        id="recuperar_pendientes",
+        # Si una vuelta se demora, no se amontonan: la siguiente la cubre.
+        max_instances=1,
+        coalesce=True,
+    )
+
     # La hora es la de las fincas, no la del servidor. Sin timezone explicito,
     # un servidor en UTC dispararia el resumen de las 18:00 a las 13:00 de
     # Colombia, a media jornada y con la mitad de los reportes sin llegar.
@@ -104,7 +125,8 @@ def iniciar_scheduler():
     programar(scheduler, config.HORA_RESUMEN_DIARIO)
     scheduler.start()
 
-    # Lo que quedo en la cola cuando murio el proceso anterior.
+    # Lo que quedo en la cola cuando murio el proceso anterior. Despues lo
+    # sigue haciendo el planificador cada pocos minutos.
     recuperar_cola()
 
     log = logging.getLogger("main")
@@ -119,7 +141,20 @@ def iniciar_scheduler():
 
 @app.on_event("shutdown")
 def detener_scheduler():
-    scheduler.shutdown()
+    """Deja terminar lo que hay en la cola antes de salir.
+
+    En cada despliegue el proceso viejo recibe SIGTERM con mensajes todavia en
+    la cola. Cortarlos a medias no los pierde —siguen pendientes en la base—,
+    pero los demora hasta que la recuperacion del proceso nuevo los encuentre.
+    """
+    scheduler.shutdown(wait=False)
+    log = logging.getLogger("main")
+    if not esperar_vaciado(SEGUNDOS_PARA_VACIAR_AL_APAGAR):
+        log.warning(
+            "Apagado con %d mensaje(s) todavia en la cola: siguen pendientes en la base "
+            "y los retoma la recuperacion del proceso nuevo",
+            en_cola(),
+        )
 
 
 @app.get("/")

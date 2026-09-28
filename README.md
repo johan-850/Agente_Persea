@@ -108,10 +108,13 @@ app/
 │   └── admin_service.py              # destinatarios de las alertas
 ├── db/supabase_client.py
 ├── models/reporte.py
-└── main.py
+├── main.py                       # la app, el planificador y el arranque
+└── __main__.py                   # arranque en producción: python -m app
 supabase/migraciones/               # SQL para dejar la base lista
-scripts/levantar.ps1                # arranca servidor y túnel
+scripts/verificar_despliegue.py     # prueba una configuración de producción
 scripts/crear_plantillas.py         # crea y revisa las plantillas en Meta
+scripts/levantar.ps1                # desarrollo: servidor y túnel en local
+railway.json                        # cómo se arranca en Railway
 tests/
 ```
 
@@ -167,13 +170,52 @@ copy .env.example .env
 
 El bucket de fotos lo crea la migración `005`, privado. Las fotos muestran trabajadores y detalles de las fincas, así que no quedan detrás de una URL pública: el enlace se firma en el momento y vence.
 
-### 4. Ejecutar
+### 4. Ejecutar en local
 
 ```bash
 uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-En desarrollo, exponer el puerto (`ngrok http 8000`) y registrar `https://<dominio>/meta/webhook` como callback en Meta → Webhooks → WhatsApp Business Account, **suscribiendo el campo `messages`**.
+En desarrollo, exponer el puerto (`ngrok http 8000`) y registrar `https://<dominio>/meta/webhook` como callback en Meta → Webhooks → WhatsApp Business Account, **suscribiendo el campo `messages`**. Para operar de verdad, ver [Despliegue](#despliegue).
+
+## Despliegue
+
+El agente corre como **un proceso siempre encendido, en una sola instancia**. Las dos cosas las exige el diseño:
+
+- La cola procesa los mensajes en orden de llegada: el reporte antes que sus fotos. Con dos instancias cada una tendría su cola, y una foto podría procesarse antes que el reporte al que pertenece.
+- Los resúmenes y la recuperación de mensajes a medias los programa el propio proceso. Una plataforma que duerma el servicio por inactividad los deja sin correr: el resumen de las 18:00 no sale.
+
+Por eso no sirve una plataforma serverless (Vercel) tal como está, ni el plan gratuito de Render, que apaga el servicio tras 15 minutos sin tráfico. Está preparado para **Railway**: `railway.json` define el arranque (`python -m app`), el health check y el apagado ordenado.
+
+### Primera vez
+
+1. **Base de datos.** Crear un proyecto en Supabase, en la cuenta de la empresa y en la región East US (N. Virginia). En el SQL Editor, correr en orden `supabase/migraciones/001` a `005`.
+2. **Configuración.** Copiar `.env.example` a `.env.produccion` y llenarlo con las credenciales de producción; `.gitignore` excluye cualquier `.env.*`. Para `API_TOKEN`, generar uno nuevo:
+   ```bash
+   python -c "import secrets; print(secrets.token_urlsafe(36))"
+   ```
+3. **Verificar antes de desplegar.** Prueba cada credencial contra su servicio (la base y su esquema, el bucket, los administradores, el número y sus plantillas, el modelo) sin imprimir ningún valor:
+   ```bash
+   python scripts/verificar_despliegue.py
+   ```
+4. **Railway.** New Project → Deploy from GitHub repo → este repositorio. En *Variables* → *Raw Editor*, pegar el contenido de `.env.produccion`. En *Settings*: región US East, una réplica, y *Serverless* apagado. En *Networking*, generar el dominio público.
+5. **Verificar el servidor.** Además de lo anterior, comprueba que responde, que tiene el mismo token de verificación que va a usar Meta, que rechaza eventos sin la firma de Meta y que la API está cerrada:
+   ```bash
+   python scripts/verificar_despliegue.py --url https://<dominio>
+   ```
+
+### Pasar el tráfico
+
+Fuera de jornada —después del resumen de las 18:00 o antes de las 7:00— para que ningún día quede partido entre dos bases:
+
+1. Cargar los administradores en la base nueva. Antes no: el resumen de las 18:00 les llegaría vacío.
+2. En Meta → la app → WhatsApp → Configuración → Webhook, cambiar la URL de callback a `https://<dominio>/meta/webhook`, con el mismo token de verificación, y confirmar que `messages` sigue suscrito.
+3. Mandar un reporte de prueba y confirmar que llega a la base nueva.
+4. Apagar el agente local con `scripts/detener.ps1`. Si queda encendido, a las 18:00 manda un segundo resumen con los datos de la base vieja.
+
+### Actualizaciones
+
+Cada push a `main` despliega. Al apagarse, el proceso viejo termina lo que tiene en la cola, hasta 25 segundos. Lo que no alcance queda pendiente en la base con el mensaje completo, y el proceso nuevo lo retoma en menos de 15 minutos: la recuperación corre cada 5 minutos y solo toma pendientes de más de 10, para no quitarle al proceso viejo lo que todavía está procesando. Aun así, conviene desplegar fuera de jornada.
 
 ## API
 
@@ -271,14 +313,16 @@ Estas no son decisiones del proyecto, son límites de la plataforma:
 
 ## Pruebas
 
-Las reglas de alerta son la red de seguridad del sistema, así que tienen pruebas con casos tomados de reportes reales:
+Las reglas de alerta son la red de seguridad del sistema, así que tienen pruebas con casos tomados de reportes reales. Cada archivo de `tests/` se corre solo y termina con código distinto de cero si algo falla:
 
 ```bash
-python tests/test_alertas_monitoreo.py
+for t in tests/test_*.py; do python "$t" > /dev/null || echo "FALLA: $t"; done
 ```
+
+Varias usan la base de desarrollo del `.env`, y una llama al modelo (clasificación de mensajes). Las que pasan por el envío de WhatsApp lo sustituyen: ninguna manda mensajes de verdad.
 
 ## Roadmap
 
-- [ ] Despliegue 24/7 — actualmente corre en local y depende de un túnel.
+- [ ] Despliegue 24/7 — preparado para Railway (ver [Despliegue](#despliegue)); falta pasar el tráfico.
 - [ ] Panel web para consultar histórico y estadísticas.
 - [ ] Reactivar el flujo de reportes de labores (fertilización, aplicaciones, drench), hoy en el repo pero desconectado del webhook.

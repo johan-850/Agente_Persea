@@ -1,4 +1,8 @@
+# Cualquier archivo de credenciales: .env, .env.produccion, .env.local...
+# Solo la plantilla sin valores se versiona.
 .env
+.env.*
+!.env.example
 __pycache__/
 *.pyc
 .venv/

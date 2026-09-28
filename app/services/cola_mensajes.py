@@ -7,19 +7,26 @@ evento se reenvia y se duplica todo.
 
 Aqui el webhook solo encola y responde. Un unico hilo consume la cola, lo que
 ademas conserva el orden de llegada: si una monitora manda el reporte y despues
-las fotos, el monitoreo existe cuando llegan las fotos y se pueden asociar.
+las fotos, el monitoreo existe cuando llegan las fotos y se pueden asociar. Por
+eso el agente corre en UNA sola instancia: con dos, cada una tendria su cola y
+el orden se perderia.
+
+Un mensaje que falla no se suelta ni se borra: queda pendiente en la base, con
+el mensaje crudo, y la recuperacion lo vuelve a intentar. A Meta ya se le
+respondio 200, asi que no lo va a reenviar; si no lo reintentamos nosotros, el
+reporte se pierde.
 """
 
 import logging
 import queue
 import threading
+import time
 from typing import Callable
 
 from app.services.idempotencia_service import (
-    contar_intento,
-    liberar,
     marcar_procesado,
     pendientes,
+    tomar_para_reintento,
 )
 
 logger = logging.getLogger("cola_mensajes")
@@ -27,6 +34,16 @@ logger = logging.getLogger("cola_mensajes")
 _cola: "queue.Queue[tuple[Callable[[dict], None], dict]]" = queue.Queue()
 _hilo: threading.Thread | None = None
 _candado = threading.Lock()
+
+# Los mensajes que este proceso tiene entre manos: en la cola o procesandose.
+# La recuperacion los salta; si no, un mensaje que espera detras de una rafaga
+# larga pareceria abandonado y se encolaria dos veces.
+_en_curso: set[str] = set()
+_cambio_en_curso = threading.Condition(_candado)
+
+
+def _clave(mensaje: dict) -> str:
+    return mensaje.get("id") or f"sin-id-{id(mensaje)}"
 
 
 def _bucle() -> None:
@@ -39,19 +56,23 @@ def _bucle() -> None:
             # Un fallo no puede matar al hilo: se perderian todos los mensajes
             # siguientes sin que nadie se entere.
             #
-            # El mensaje completo va al log porque a este punto ya se respondio
-            # 200 a Meta y no habra reenvio: si no queda aqui, el reporte de
-            # campo se pierde y nadie se entera.
+            # El mensaje sigue pendiente en la base y se reintenta en la
+            # proxima recuperacion. Va completo al log por si tambien fallan
+            # los reintentos.
             logger.exception(
-                "Fallo procesando el mensaje %s; contenido: %s", wamid, mensaje
+                "Fallo procesando el mensaje %s; queda pendiente para reintentarlo. "
+                "Contenido: %s",
+                wamid,
+                mensaje,
             )
-            if wamid:
-                liberar(wamid)
         else:
-            # Cerrarlo evita que se reintente en el proximo arranque.
+            # Cerrarlo evita que se reintente.
             if wamid:
                 marcar_procesado(wamid)
         finally:
+            with _cambio_en_curso:
+                _en_curso.discard(_clave(mensaje))
+                _cambio_en_curso.notify_all()
             _cola.task_done()
 
 
@@ -67,6 +88,8 @@ def iniciar() -> None:
 def encolar(manejador: Callable[[dict], None], mensaje: dict) -> int:
     """Agrega un mensaje a la cola y devuelve cuantos quedan pendientes."""
     iniciar()
+    with _cambio_en_curso:
+        _en_curso.add(_clave(mensaje))
     _cola.put((manejador, mensaje))
     return _cola.qsize()
 
@@ -75,23 +98,48 @@ def en_cola() -> int:
     return _cola.qsize()
 
 
-def recuperar_pendientes(manejador: Callable[[dict], None]) -> int:
-    """Vuelve a encolar lo que quedo a medias cuando murio el proceso.
+def esperar_vaciado(segundos: float) -> bool:
+    """Espera a que termine lo que hay en la cola. True si alcanzo.
 
-    Sin esto, los mensajes que estaban en la cola se perdian del todo: solo
-    existian en memoria, y su wamid ya estaba reclamado, asi que ni un reenvio
-    de Meta los habria recuperado.
+    Se usa al apagar. En cada despliegue el proceso viejo recibe la orden de
+    terminar con mensajes todavia en la cola; dejarlos terminar es mejor que
+    cortarlos a medias y esperar a que la recuperacion los retome.
+    """
+    limite = time.monotonic() + segundos
+    with _cambio_en_curso:
+        while _en_curso:
+            restante = limite - time.monotonic()
+            if restante <= 0:
+                return False
+            _cambio_en_curso.wait(restante)
+    return True
+
+
+def recuperar_pendientes(manejador: Callable[[dict], None]) -> int:
+    """Vuelve a encolar lo que quedo a medias o fallo.
+
+    Corre al arrancar y cada pocos minutos. Sin esto, los mensajes que estaban
+    en la cola cuando murio el proceso se perdian del todo: solo existian en
+    memoria, y su wamid ya estaba reclamado, asi que ni un reenvio de Meta los
+    habria recuperado.
+
+    Solo toma pendientes con cierta antiguedad (ver ANTIGUEDAD_PARA_RECUPERAR)
+    y solo si gana la toma en la base, para no procesar dos veces lo que otro
+    proceso todavia tiene entre manos.
     """
     filas = pendientes()
-    if not filas:
-        return 0
+    recuperados = 0
 
     for fila in filas:
-        contar_intento(fila["wamid"], fila.get("intentos") or 0)
+        wamid = fila["wamid"]
+        with _cambio_en_curso:
+            if wamid in _en_curso:
+                continue
+        if not tomar_para_reintento(wamid, fila.get("intentos") or 0):
+            continue
         encolar(manejador, fila["payload"])
+        recuperados += 1
 
-    logger.warning(
-        "Se recuperaron %d mensaje(s) que quedaron sin procesar en el arranque anterior",
-        len(filas),
-    )
-    return len(filas)
+    if recuperados:
+        logger.warning("Se recuperaron %d mensaje(s) que habian quedado sin procesar", recuperados)
+    return recuperados

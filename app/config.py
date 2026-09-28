@@ -54,6 +54,8 @@ _VARIABLES: dict[str, tuple[str, str | int]] = {
     # aqui correria el dia de todos los reportes.
     "HORA_RESUMEN_DIARIO": ("HORA_RESUMEN_DIARIO", 18),
     "NIVEL_LOG": ("NIVEL_LOG", "INFO"),
+    # Lo asigna la plataforma de despliegue; en local se usa el 8000.
+    "PUERTO": ("PORT", 8000),
 }
 
 # Sin estas el agente no hace su trabajo: no guarda, no lee o no avisa.

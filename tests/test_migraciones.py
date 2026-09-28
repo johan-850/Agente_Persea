@@ -20,10 +20,6 @@ import urllib.request
 RAIZ = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, RAIZ)
 
-from dotenv import load_dotenv  # noqa: E402
-
-load_dotenv(os.path.join(RAIZ, ".env"))
-
 MIGRACIONES = os.path.join(RAIZ, "supabase", "migraciones")
 
 # Se retiro con el flujo de reportes de labores: ninguna migracion la crea, y
@@ -133,4 +129,11 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # Aqui y no al importar: scripts/verificar_despliegue.py reutiliza estas
+    # funciones contra la base de produccion, y un .env de desarrollo cargado
+    # de paso rellenaria lo que le falte y haria pasar la prueba contra la
+    # base equivocada.
+    from dotenv import load_dotenv
+
+    load_dotenv(os.path.join(RAIZ, ".env"))
     raise SystemExit(main())
