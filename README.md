@@ -324,6 +324,7 @@ Varias usan la base de desarrollo del `.env`, y una llama al modelo (clasificaci
 
 ## Roadmap
 
-- [ ] Despliegue 24/7 — preparado para Railway (ver [Despliegue](#despliegue)); falta pasar el tráfico.
+- [x] Despliegue 24/7 en Railway (ver [Despliegue](#despliegue)). En prueba desde el 28 de septiembre de 2026, todavía con la base de desarrollo.
+- [ ] Base de producción propia de la empresa, con clave `sb_secret_`.
 - [ ] Panel web para consultar histórico y estadísticas.
 - [ ] Reactivar el flujo de reportes de labores (fertilización, aplicaciones, drench), hoy en el repo pero desconectado del webhook.
