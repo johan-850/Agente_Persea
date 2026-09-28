@@ -14,6 +14,7 @@ No llama a la base ni al modelo: el cliente del modelo se sustituye por uno
 falso. Correr:  python tests/test_configuracion.py
 """
 
+import base64
 import json
 import os
 import re
@@ -33,9 +34,15 @@ def revisar(descripcion, obtenido, esperado):
     CASOS.append((descripcion, obtenido, esperado))
 
 
+def jwt(rol: str) -> str:
+    """Una clave clasica de Supabase con ese rol. La firma no se verifica."""
+    carga = base64.urlsafe_b64encode(json.dumps({"role": rol}).encode()).decode().rstrip("=")
+    return f"eyJhbGciOiJIUzI1NiJ9.{carga}.firma"
+
+
 COMPLETA = {
     "SUPABASE_URL": "https://abc.supabase.co",
-    "SUPABASE_KEY": "x" * 200,
+    "SUPABASE_KEY": "sb_secret_" + "x" * 32,
     "ANTHROPIC_API_KEY": "sk-ant-api03-xxxx",
     "META_ACCESS_TOKEN": "EAAB",
     "META_PHONE_NUMBER_ID": "123",
@@ -44,7 +51,7 @@ COMPLETA = {
     "META_WABA_ID": "456",
     "API_TOKEN": "clave",
 }
-TODAS = set(COMPLETA) | {"SUPABASE_BUCKET_FOTOS", "MODELO_IA", "HORA_RESUMEN_DIARIO", "NIVEL_LOG"}
+TODAS = set(COMPLETA) | {"SUPABASE_BUCKET_FOTOS", "MODELO_IA", "HORA_RESUMEN_DIARIO", "NIVEL_LOG", "PORT"}
 
 
 def entorno(**valores):
@@ -77,9 +84,29 @@ revisar("un valor en blanco cuenta como vacio", config.revisar().faltantes, ["SU
 print("\nERRORES DE COPIADO")
 entorno(**{**COMPLETA, "SUPABASE_URL": "abc.supabase.co"})
 revisar("URL sin https no arranca", config.revisar().puede_arrancar, False)
-entorno(**{**COMPLETA, "SUPABASE_KEY": "corta"})
-revisar("clave de base corta avisa (seria la anon)",
-        any("service_role" in a for a in config.revisar().avisos), True)
+
+print("\nQUE CLAVE DE LA BASE ES")
+revisar("la secret nueva se reconoce", config.tipo_de_clave_bd("sb_secret_abc"), "secret")
+revisar("la publishable nueva se reconoce", config.tipo_de_clave_bd("sb_publishable_abc"), "publishable")
+revisar("la clasica se lee por su rol: service_role", config.tipo_de_clave_bd(jwt("service_role")), "service_role")
+revisar("la clasica se lee por su rol: anon", config.tipo_de_clave_bd(jwt("anon")), "anon")
+revisar("algo mal copiado no pasa por clave", config.tipo_de_clave_bd("eyJhbGciOi.corta"), "desconocida")
+
+for clave, nombre in ((jwt("anon"), "anon"), ("sb_publishable_abc", "publishable")):
+    entorno(**{**COMPLETA, "SUPABASE_KEY": clave})
+    r = config.revisar()
+    revisar(f"con la publica ({nombre}) no arranca: los inserts no pasarian", r.puede_arrancar, False)
+    revisar(f"y dice que hace falta la secret ({nombre})",
+            any("sb_secret_" in f for f in r.faltantes), True)
+
+entorno(**{**COMPLETA, "SUPABASE_KEY": jwt("service_role")})
+r = config.revisar()
+revisar("la service_role clasica todavia arranca", r.puede_arrancar, True)
+revisar("pero avisa que Supabase la retira", any("2026" in a for a in r.avisos), True)
+
+entorno(**{**COMPLETA, "SUPABASE_KEY": "algo-mal-copiado"})
+revisar("una clave con formato raro avisa",
+        any("formato" in a for a in config.revisar().avisos), True)
 entorno(**{**COMPLETA, "ANTHROPIC_API_KEY": "api03-xxxx"})
 revisar("clave del modelo cortada avisa",
         any("sk-ant-" in a for a in config.revisar().avisos), True)

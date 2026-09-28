@@ -24,6 +24,8 @@ modulo. Asi no importa en que orden se cargue el .env, y un test puede cambiar
 una variable y ver el efecto sin recargar nada.
 """
 
+import base64
+import json
 import os
 from dataclasses import dataclass
 
@@ -114,6 +116,30 @@ class Revision:
         return "\n".join(lineas) or "Configuracion completa."
 
 
+def tipo_de_clave_bd(clave: str) -> str:
+    """Que clave de Supabase es: 'secret', 'service_role', 'publishable',
+    'anon' o 'desconocida'.
+
+    Las clasicas son JWT y el rol va escrito adentro: se lee sin verificar la
+    firma, que aqui no importa. Las nuevas no son JWT y se reconocen por el
+    prefijo.
+    """
+    if clave.startswith("sb_secret_"):
+        return "secret"
+    if clave.startswith("sb_publishable_"):
+        return "publishable"
+    partes = clave.split(".")
+    if len(partes) == 3:
+        try:
+            carga = partes[1] + "=" * (-len(partes[1]) % 4)
+            rol = json.loads(base64.urlsafe_b64decode(carga)).get("role")
+        except Exception:
+            return "desconocida"
+        if rol in ("service_role", "anon"):
+            return rol
+    return "desconocida"
+
+
 def revisar() -> Revision:
     """Que falta para operar. Se llama al arrancar."""
     faltantes = [nombre for nombre in OBLIGATORIAS if not _crudo(nombre)]
@@ -125,10 +151,23 @@ def revisar() -> Revision:
         faltantes.append("SUPABASE_URL: tiene que empezar por https://")
 
     clave_bd = _crudo("SUPABASE_KEY")
-    if clave_bd and len(clave_bd) < 100:
+    tipo = tipo_de_clave_bd(clave_bd) if clave_bd else None
+    if tipo in ("anon", "publishable"):
+        # Con la publica las lecturas pueden funcionar y los inserts no: el
+        # agente responderia a todo y no guardaria ningun reporte.
+        faltantes.append(
+            f"SUPABASE_KEY: es la clave publica ({tipo}); con ella RLS bloquea los "
+            "inserts y no se guarda nada. Hace falta la secret (sb_secret_...)"
+        )
+    elif tipo == "service_role":
         avisos.append(
-            "SUPABASE_KEY parece corta. Tiene que ser la service_role; "
-            "con la anon, RLS bloquea los inserts y no se guarda nada"
+            "SUPABASE_KEY es la service_role clasica: funciona, pero Supabase la retira "
+            "a fines de 2026. Cambiarla por una secret (sb_secret_...) de Settings > API Keys"
+        )
+    elif tipo == "desconocida":
+        avisos.append(
+            "SUPABASE_KEY no tiene el formato de ninguna clave de Supabase: revisar que "
+            "se haya copiado entera"
         )
 
     clave_ia = _crudo("ANTHROPIC_API_KEY")

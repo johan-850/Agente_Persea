@@ -64,14 +64,12 @@ def columnas_reales() -> dict[str, set]:
     """Las columnas que hay en la base, segun el OpenAPI de PostgREST."""
     url = os.environ["SUPABASE_URL"].rstrip("/")
     clave = os.environ["SUPABASE_KEY"]
-    peticion = urllib.request.Request(
-        f"{url}/rest/v1/",
-        headers={
-            "apikey": clave,
-            "Authorization": f"Bearer {clave}",
-            "Accept": "application/openapi+json",
-        },
-    )
+    cabeceras = {"apikey": clave, "Accept": "application/openapi+json"}
+    # Las claves nuevas (sb_secret_...) van solo en apikey: no son JWT, y
+    # Supabase pide no mandarlas como Bearer. Las clasicas si lo son.
+    if clave.count(".") == 2:
+        cabeceras["Authorization"] = f"Bearer {clave}"
+    peticion = urllib.request.Request(f"{url}/rest/v1/", headers=cabeceras)
     with urllib.request.urlopen(peticion, timeout=40) as respuesta:
         spec = json.loads(respuesta.read())
 
