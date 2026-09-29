@@ -240,5 +240,6 @@ def enviar_resumen_semanal(fecha: str | None = None) -> str:
         respaldo=texto,
         tipo="resumen_semanal",
         referencia=f"{lunes}/{viernes}",
+        aplazar_de_noche=False,
     )
     return texto

@@ -96,6 +96,13 @@ revisar("cada cinco minutos, no solo al arrancar",
         recuperacion.trigger.interval.total_seconds(), 300)
 revisar("sin amontonar vueltas si una se demora", recuperacion.max_instances, 1)
 
+print("\nLO QUE ESPERO LA NOCHE SALE SOLO")
+despacho = planificador.get_job("despachar_aplazados")
+revisar("hay una tarea que manda las alertas aplazadas", despacho is not None, True)
+revisar("cada cinco minutos: no depende de estar vivo a las 6:00 en punto",
+        despacho.trigger.interval.total_seconds(), 300)
+revisar("sin amontonar vueltas", despacho.max_instances, 1)
+
 print("\nLA HORA ES LA QUE SE LE PASE")
 otro_diario, otro_semanal = disparos(hora=6)
 revisar("el diario obedece", siguiente(otro_diario, "lunes").hour, 6)

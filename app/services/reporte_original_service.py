@@ -250,11 +250,15 @@ def _enviar_foto_sola(foto: dict, destinatario: str) -> None:
 # --------------------------------------------------------------------------
 
 
-def responder_a_mensaje_citado(wamid_citado: str, remitente: str) -> bool:
+def responder_a_mensaje_citado(wamid_citado: str, remitente: str, responder: bool = True) -> bool:
     """Si un administrador respondio a una alerta, le manda su reporte.
 
     Devuelve True si lo atendio. False si no era una alerta o no es
     administrador: el mensaje sigue entonces su camino normal.
+
+    Con `responder` en False —el pedido llego tarde— lo da por atendido sin
+    mandar nada: el reporte horas despues, quiza de madrugada, ya no le
+    contesta a nadie.
     """
     envio = _envio(wamid_citado)
     if not envio or envio.get("tipo") not in TIPOS_CON_REPORTE:
@@ -267,6 +271,9 @@ def responder_a_mensaje_citado(wamid_citado: str, remitente: str) -> bool:
 
     clase, identificador = coincide.group(1), int(coincide.group(2))
     referencia = f"{clase}:{identificador}"
+    if not responder:
+        logger.info("%s pidio el reporte de la alerta %s, pero el pedido llego tarde", remitente, referencia)
+        return True
     logger.info("%s pidio el reporte de la alerta %s", remitente, referencia)
     no_esta = "No encontré el reporte de esa alerta: puede que se haya borrado de la base."
 

@@ -14,6 +14,7 @@ nosotros lo pusimos en la cola de Meta.
 
 import logging
 
+from app import horario
 from app.db.supabase_client import get_client
 
 logger = logging.getLogger("envios")
@@ -39,7 +40,7 @@ def registrar(
     wamid: str | None = None,
     detalle: str | None = None,
     referencia: str | None = None,
-) -> None:
+) -> bool:
     """Deja constancia de un envio. Nunca interrumpe el aviso.
 
     Si falla el registro se avisa y se sigue: perder la auditoria es malo,
@@ -55,8 +56,110 @@ def registrar(
             "estado": estado,
             "detalle": (detalle or "")[:500] or None,
         }).execute()
+        return True
     except Exception:
         logger.exception("No se pudo registrar el envio a %s (%s)", destinatario, tipo)
+        return False
+
+
+# --------------------------------------------------------------------------
+# Lo que espera a que termine la noche: aplazado -> enviando -> aceptado.
+# Ver meta_whatsapp_service.despachar_aplazados.
+# --------------------------------------------------------------------------
+
+
+def aplazar(
+    tipo: str, destinatarios: list, contenido: dict, referencia: str | None = None
+) -> bool:
+    """Guarda un aviso por destinatario para mandarlo despues. True si quedo.
+
+    Van todos en un solo insert: o se aplaza para todos o para ninguno. Si
+    falla, quien lo llama lo manda ya a todos, y nadie se queda sin el aviso
+    mientras otro lo recibe.
+    """
+    if not destinatarios:
+        return True
+    try:
+        get_client().table("envios").insert([
+            {
+                "tipo": tipo,
+                "referencia": referencia,
+                "destinatario": destinatario,
+                "estado": "aplazado",
+                "contenido": contenido,
+            }
+            for destinatario in destinatarios
+        ]).execute()
+        return True
+    except Exception:
+        logger.exception("No se pudo aplazar el aviso %s (%s)", tipo, referencia)
+        return False
+
+
+def aplazados(limite: int = 50) -> list[dict]:
+    """Los avisos que siguen esperando, en el orden en que se aplazaron."""
+    try:
+        return (
+            get_client()
+            .table("envios")
+            .select("id, tipo, referencia, destinatario, contenido")
+            .eq("estado", "aplazado")
+            .order("id")
+            .limit(limite)
+            .execute()
+            .data
+        )
+    except Exception:
+        logger.exception("No se pudieron consultar los envios aplazados")
+        return []
+
+
+def tomar_aplazado(envio_id: int) -> bool:
+    """Se queda con un aviso aplazado, si nadie lo tomo antes.
+
+    Es una comparacion-y-cambio, como tomar_para_reintento en idempotencia:
+    el UPDATE solo pasa si la fila sigue en "aplazado". Durante un despliegue
+    corren dos procesos y los dos buscan aplazados; Postgres serializa los dos
+    UPDATE y el segundo ya no encuentra la fila, asi que el aviso sale una vez.
+    """
+    try:
+        resultado = (
+            get_client()
+            .table("envios")
+            .update({"estado": "enviando"})
+            .eq("id", envio_id)
+            .eq("estado", "aplazado")
+            .execute()
+        )
+    except Exception:
+        logger.exception("No se pudo tomar el envio aplazado %s", envio_id)
+        return False
+    return bool(resultado.data)
+
+
+def completar_aplazado(
+    envio_id: int,
+    estado: str,
+    plantilla: str | None = None,
+    wamid: str | None = None,
+    detalle: str | None = None,
+) -> None:
+    """Deja en la fila como salio el aviso.
+
+    La hora pasa a ser la del envio real: la fila dice cuando le llego al
+    administrador, que es lo que se mira para saber si algo salio de noche.
+    Que espero se sigue viendo en contenido, que solo tienen las aplazadas.
+    """
+    try:
+        get_client().table("envios").update({
+            "estado": estado,
+            "plantilla": plantilla,
+            "wamid": wamid,
+            "detalle": (detalle or "")[:500] or None,
+            "fecha_hora": horario.ahora().isoformat(),
+        }).eq("id", envio_id).execute()
+    except Exception:
+        logger.exception("No se pudo registrar como salio el envio aplazado %s", envio_id)
 
 
 def actualizar_estado(wamid: str, estado_meta: str, detalle: str | None = None) -> None:

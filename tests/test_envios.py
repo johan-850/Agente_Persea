@@ -14,6 +14,7 @@ envio esta interceptado. Correr:  python tests/test_envios.py
 
 import os
 import sys
+from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -21,8 +22,13 @@ from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
+from app import horario  # noqa: E402
 from app.db.supabase_client import get_client  # noqa: E402
 from app.services import envios_service, meta_whatsapp_service  # noqa: E402
+
+# Mediodia, para que la prueba no dependa de a que hora se corra: de noche
+# los avisos se aplazan en vez de salir, y eso lo prueba test_silencio.py.
+horario.ahora = lambda: datetime(2026, 9, 29, 12, 0, tzinfo=horario.ZONA)
 
 TIPO = "prueba_envios"
 ADMIN = "+570000000123"

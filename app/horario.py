@@ -29,10 +29,33 @@ ZONA = ZoneInfo("America/Bogota")
 JORNADA_INICIO = time(7, 0)
 JORNADA_FIN = time(16, 30)
 
+# La noche, en que el agente no le escribe a nadie por su cuenta. El 29 de
+# septiembre, a la 1:55 de la mañana, le llego a un administrador la respuesta
+# a una pregunta de seis dias antes. De noche solo se le contesta a quien
+# acaba de escribir, que por eso mismo esta despierto; las alertas esperan a
+# que termine (ver meta_whatsapp_service.despachar_aplazados).
+SILENCIO_INICIO = time(20, 0)
+SILENCIO_FIN = time(6, 0)
+
 
 def ahora() -> datetime:
     """La hora en las fincas, no la del servidor."""
     return datetime.now(ZONA)
+
+
+def es_hora_de_silencio(hora: time) -> bool:
+    """Si esa hora del dia cae en la noche. El tramo cruza la medianoche."""
+    return hora >= SILENCIO_INICIO or hora < SILENCIO_FIN
+
+
+def en_silencio(momento: datetime | None = None) -> bool:
+    """Si ese instante —por defecto, ahora— es de noche en las fincas."""
+    return es_hora_de_silencio((momento or ahora()).astimezone(ZONA).time())
+
+
+def fecha_de(momento: datetime) -> str:
+    """El dia de las fincas en que cae ese instante, en formato ISO."""
+    return momento.astimezone(ZONA).date().isoformat()
 
 
 def hoy() -> str:
@@ -91,3 +114,14 @@ def rango_legible(desde: str, hasta: str) -> str:
     if a.month == b.month:
         return f"{a.day} al {b.day} de {MESES[a.month - 1]}"
     return f"{a.day} de {MESES[a.month - 1]} al {b.day} de {MESES[b.month - 1]}"
+
+
+def cuando_legible(momento: datetime | str) -> str:
+    """'el 23 de septiembre a las 19:40', en hora de las fincas.
+
+    Acepta el datetime o el texto ISO con que la base devuelve fecha_hora.
+    """
+    if isinstance(momento, str):
+        momento = datetime.fromisoformat(momento)
+    local = momento.astimezone(ZONA)
+    return f"el {local.day} de {MESES[local.month - 1]} a las {local:%H:%M}"

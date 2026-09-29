@@ -236,5 +236,8 @@ def enviar_resumen_diario(fecha: str | None = None) -> str:
         respaldo=texto,
         tipo="resumen_diario",
         referencia=fecha,
+        # Sale a la hora configurada, que config.revisar() vigila que no caiga
+        # de noche.
+        aplazar_de_noche=False,
     )
     return texto

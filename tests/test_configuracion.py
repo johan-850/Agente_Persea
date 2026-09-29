@@ -114,6 +114,14 @@ for hora in ("17h", "25", "-1"):
     entorno(**{**COMPLETA, "HORA_RESUMEN_DIARIO": hora})
     revisar(f"hora {hora!r} no arranca", config.revisar().puede_arrancar, False)
 
+print("\nEL RESUMEN NO CAE DE NOCHE")
+for hora, de_noche in (("18", False), ("19", False), ("20", True), ("23", True), ("5", True), ("6", False)):
+    entorno(**{**COMPLETA, "HORA_RESUMEN_DIARIO": hora})
+    r = config.revisar()
+    revisar(f"a las {hora} {'avisa' if de_noche else 'no avisa'}",
+            any("de noche" in a for a in r.avisos), de_noche)
+    revisar(f"a las {hora} arranca igual", r.puede_arrancar, True)
+
 print("\nLO RECOMENDABLE AVISA PERO NO FRENA")
 for nombre in ("META_APP_SECRET", "API_TOKEN", "META_WABA_ID"):
     entorno(**{k: v for k, v in COMPLETA.items() if k != nombre})

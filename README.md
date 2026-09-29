@@ -33,7 +33,7 @@ Ese volumen de mensajes no se lee ni se consolida a mano, y los hallazgos urgent
 
 - **Extrae** finca, lote, tipo de labor, número de monitoras, estado del lote y plagas observadas, aunque el mensaje venga desordenado.
 - **Separa por lote**: un mensaje que reporta dos lotes genera dos registros independientes.
-- **Alerta en el momento** cuando detecta una plaga cuarentenaria, un foco marcado como `ACTIVO` o un accidente.
+- **Alerta en el momento** cuando detecta una plaga cuarentenaria, un foco marcado como `ACTIVO` o un accidente. De noche, de 20:00 a 6:00, no le escribe a nadie por su cuenta: la alerta espera y sale a las 6:00, diciendo a qué hora se reportó.
 - **Archiva las fotos** de los daños, descritas y ligadas al reporte al que pertenecen.
 - **Muestra el reporte original.** El administrador que **responde a una alerta** en WhatsApp (mantener presionado → *Responder*, con cualquier texto) recibe el reporte tal como lo escribió la monitora y sus fotos, primero las de daño. También puede pedirlo por escrito: *"muéstrame el reporte original del 14 de rivera"*. El texto va tal cual, sin pasar por el modelo, que lo resumiría.
 - **Consolida el día** en un resumen que sale de lunes a sábado a las 18:00, al cierre de la jornada. Los viernes, media hora después, va además el resumen de la semana: la dispersión de cada cuarentenaria por lote y qué lotes vienen alertando varios días.
@@ -63,7 +63,7 @@ Meta WhatsApp Cloud API
       │                       Storage  → fotos (bucket privado)
       │
       └──────────► Plantillas WhatsApp ──► Administradores
-                                            · alerta inmediata
+                                            · alerta inmediata (de noche, a las 6:00)
                                             · resumen diario (lun-sab 18:00)
                                             · resumen semanal (vie 18:30)
 ```
@@ -85,7 +85,7 @@ La detección de alertas es **doble**: la IA clasifica, y además se aplican reg
 ```
 app/
 ├── config.py                     # TODA la configuración: qué existe, defectos, revisión al arrancar
-├── horario.py                    # el día de la finca (zona de Colombia, jornada)
+├── horario.py                    # el día de la finca (zona de Colombia, jornada, noche)
 ├── api/
 │   ├── routes_meta_whatsapp.py   # webhook de Meta (verificación + recepción)
 │   ├── routes_monitoreo.py       # API REST de consulta
@@ -190,7 +190,7 @@ Por eso no sirve una plataforma serverless (Vercel) tal como está, ni el plan g
 
 ### Primera vez
 
-1. **Base de datos.** Crear un proyecto en Supabase, en la cuenta de la empresa y en la región East US (N. Virginia). En el SQL Editor, correr en orden `supabase/migraciones/001` a `005`.
+1. **Base de datos.** Crear un proyecto en Supabase, en la cuenta de la empresa y en la región East US (N. Virginia). En el SQL Editor, correr en orden `supabase/migraciones/001` a `006`.
 2. **Configuración.** Copiar `.env.example` a `.env.produccion` y llenarlo con las credenciales de producción; `.gitignore` excluye cualquier `.env.*`. Para `API_TOKEN`, generar uno nuevo:
    ```bash
    python -c "import secrets; print(secrets.token_urlsafe(36))"
@@ -311,6 +311,7 @@ Estas no son decisiones del proyecto, son límites de la plataforma:
 | **Categoría de plantilla** | Deben quedar como `UTILITY`, no `MARKETING`: son más baratas, gratis dentro de la ventana y no dependen del opt-in de marketing. El texto debe leerse como seguimiento de una solicitud del usuario. |
 | **Formato de plantilla** | Una variable no puede ir al inicio ni al final del cuerpo, ni contener saltos de línea (`limpiar_parametro()` lo resuelve). |
 | **No hay acceso a grupos** | La API oficial solo permite conversaciones 1:1. Las monitoras escriben al bot, no al grupo. |
+| **Meta reintenta hasta 7 días** lo que no pudo entregar | Un mensaje puede llegar días después de mandado. Se registra con la hora en que se mandó —un reporte cuenta en su día y alerta diciendo cuándo se hizo—, pero si llega con más de una hora de atraso no se le contesta a quien lo mandó. Pasó: el 29 de septiembre, a la 1:55 de la mañana, el agente respondió una pregunta de seis días antes, mandada con el agente apagado. |
 
 ## Pruebas
 

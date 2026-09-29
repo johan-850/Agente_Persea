@@ -193,8 +193,8 @@ revisar("y lo que pidio el modelo", (recibido.get("lote"), recibido.get("finca")
 
 print("\nEN LA ENTRADA DEL WEBHOOK")
 atendidos, procesados = [], []
-rutas.responder_a_mensaje_citado = lambda wamid, remitente: atendidos.append(wamid) or wamid == "wamid.ALERTA"
-rutas.procesar_mensaje_monitoreo = lambda texto, remitente: procesados.append(texto)
+rutas.responder_a_mensaje_citado = lambda wamid, remitente, **_: atendidos.append(wamid) or wamid == "wamid.ALERTA"
+rutas.procesar_mensaje_monitoreo = lambda texto, remitente, **_: procesados.append(texto)
 rutas._procesar_mensaje({"from": "573159793011", "type": "text", "text": {"body": "ver"},
                          "context": {"id": "wamid.ALERTA"}})
 revisar("una respuesta a una alerta no llega a procesarse como reporte", (list(atendidos), list(procesados)),

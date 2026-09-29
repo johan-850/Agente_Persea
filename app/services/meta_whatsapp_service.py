@@ -3,7 +3,7 @@ import time
 
 import httpx
 
-from app import config
+from app import config, horario
 from app.services import envios_service
 
 logger = logging.getLogger("meta_whatsapp")
@@ -174,16 +174,73 @@ def _administradores() -> list:
     return obtener_numeros_administradores()
 
 
-def enviar_a_administradores(texto: str, tipo: str = "aviso", referencia: str | None = None) -> None:
-    for numero in _administradores():
+def _entregar(numero: str, candidatas: list, respaldo: str) -> dict:
+    """Intenta las plantillas en orden y, si ninguna pasa, el texto libre.
+
+    Devuelve lo que hay que dejar en envios: estado, plantilla, wamid y
+    detalle. Sin candidatas va directo al texto libre.
+    """
+    fallo_plantilla = ""
+    for plantilla, params in candidatas:
         try:
-            wamid = enviar_mensaje(numero, texto)
-            envios_service.registrar(tipo, numero, "aceptado", wamid=wamid, referencia=referencia)
+            wamid = enviar_plantilla(numero, plantilla, params)
+            return {"estado": "aceptado", "plantilla": plantilla, "wamid": wamid, "detalle": None}
         except Exception as error:
-            logger.exception("No se pudo enviar el aviso a %s", numero)
-            envios_service.registrar(
-                tipo, numero, "fallido", detalle=str(error), referencia=referencia
-            )
+            logger.warning("Fallo la plantilla '%s' hacia %s (%s)", plantilla, numero, error)
+            fallo_plantilla = f"{plantilla}: {error}"
+
+    try:
+        wamid = enviar_mensaje(numero, respaldo)
+    except Exception as error:
+        logger.exception("No se pudo enviar el texto libre a %s", numero)
+        if not candidatas:
+            return {"estado": "fallido", "plantilla": None, "wamid": None, "detalle": str(error)}
+        return {
+            "estado": "fallido",
+            "plantilla": candidatas[0][0],
+            "wamid": None,
+            "detalle": f"plantilla: {fallo_plantilla} | texto libre: {error}",
+        }
+
+    detalle = f"texto libre; la plantilla fallo: {fallo_plantilla}" if candidatas else None
+    return {"estado": "aceptado", "plantilla": None, "wamid": wamid, "detalle": detalle}
+
+
+def _aplazar(numeros: list, tipo: str, referencia: str | None, candidatas: list, respaldo: str) -> bool:
+    """Guarda el aviso para cuando termine la noche.
+
+    False si no se pudo guardar, y entonces sale ya: un aviso a deshoras
+    molesta, pero uno perdido puede ser un foco de Heilipus del que nadie se
+    entera.
+    """
+    if not numeros:
+        return True
+    contenido = {
+        "candidatas": [[plantilla, list(params)] for plantilla, params in candidatas],
+        "respaldo": respaldo,
+    }
+    if not envios_service.aplazar(tipo, numeros, contenido, referencia):
+        logger.error("No se pudo aplazar el aviso '%s' (%s): sale ahora", tipo, referencia)
+        return False
+    logger.info(
+        "Aviso '%s' (%s) aplazado: es de noche en las fincas, sale despues de las %s",
+        tipo, referencia, horario.SILENCIO_FIN.strftime("%H:%M"),
+    )
+    return True
+
+
+def enviar_a_administradores(
+    texto: str,
+    tipo: str = "aviso",
+    referencia: str | None = None,
+    aplazar_de_noche: bool = True,
+) -> None:
+    """Texto libre a cada administrador. De noche se aplaza, como las plantillas."""
+    numeros = _administradores()
+    if aplazar_de_noche and horario.en_silencio() and _aplazar(numeros, tipo, referencia, [], texto):
+        return
+    for numero in numeros:
+        envios_service.registrar(tipo, numero, referencia=referencia, **_entregar(numero, [], texto))
 
 
 def enviar_plantilla_a_administradores(
@@ -192,6 +249,7 @@ def enviar_plantilla_a_administradores(
     respaldo: str,
     tipo: str = "aviso",
     referencia: str | None = None,
+    aplazar_de_noche: bool = True,
 ) -> None:
     """Envia la plantilla a cada administrador y deja constancia del resultado.
 
@@ -208,6 +266,12 @@ def enviar_plantilla_a_administradores(
     Cada intento queda en la tabla envios. Lo que se guarda al enviar es
     "aceptado", que solo dice que Meta lo recibio; el estado real lo traen
     despues los acuses por webhook.
+
+    De noche (horario.SILENCIO_INICIO a SILENCIO_FIN) no sale: queda en envios
+    como "aplazado", con lo que habia que mandar, y lo manda
+    despachar_aplazados al amanecer. Los resumenes pasan aplazar_de_noche=False:
+    su hora es la que se configuro, y si alguien los pide a mano es porque los
+    quiere ya.
     """
     candidatas = list(zip(nombre, parametros)) if isinstance(nombre, (list, tuple)) else [
         (nombre, parametros)
@@ -227,39 +291,42 @@ def enviar_plantilla_a_administradores(
         )
         return
 
+    if aplazar_de_noche and horario.en_silencio() and _aplazar(
+        numeros, tipo, referencia, candidatas, respaldo
+    ):
+        return
+
     for numero in numeros:
-        enviada = False
-        fallo_plantilla = ""
+        envios_service.registrar(
+            tipo, numero, referencia=referencia, **_entregar(numero, candidatas, respaldo)
+        )
 
-        for plantilla, params in candidatas:
-            try:
-                wamid = enviar_plantilla(numero, plantilla, params)
-                envios_service.registrar(
-                    tipo, numero, "aceptado",
-                    plantilla=plantilla, wamid=wamid, referencia=referencia,
-                )
-                enviada = True
-                break
-            except Exception as error:
-                logger.warning(
-                    "Fallo la plantilla '%s' hacia %s (%s)", plantilla, numero, error
-                )
-                fallo_plantilla = f"{plantilla}: {error}"
 
-        if enviada:
+def despachar_aplazados() -> int:
+    """Manda lo que espero la noche. Devuelve cuantos avisos salieron.
+
+    Corre cada pocos minutos y al arrancar. Mientras sea de noche no hace
+    nada, asi que lo aplazado sale en los primeros minutos despues de las 6:00,
+    en el orden en que se aplazo. No va a una hora fija: si a las 6:00 el
+    proceso estaba reiniciando, una tarea fija se lo saltaria hasta el dia
+    siguiente.
+
+    Cada aviso se toma en la base antes de mandarlo, porque durante un
+    despliegue corren dos procesos y los dos lo intentarian.
+    """
+    if horario.en_silencio():
+        return 0
+
+    despachados = 0
+    for fila in envios_service.aplazados():
+        if not envios_service.tomar_aplazado(fila["id"]):
             continue
+        contenido = fila.get("contenido") or {}
+        candidatas = [(plantilla, params) for plantilla, params in contenido.get("candidatas") or []]
+        resultado = _entregar(fila["destinatario"], candidatas, contenido.get("respaldo") or "")
+        envios_service.completar_aplazado(fila["id"], **resultado)
+        despachados += 1
 
-        try:
-            wamid = enviar_mensaje(numero, respaldo)
-            envios_service.registrar(
-                tipo, numero, "aceptado", wamid=wamid,
-                detalle=f"texto libre; la plantilla fallo: {fallo_plantilla}",
-                referencia=referencia,
-            )
-        except Exception as error:
-            logger.exception("Tampoco se pudo enviar el texto libre hacia %s", numero)
-            envios_service.registrar(
-                tipo, numero, "fallido", plantilla=candidatas[0][0],
-                detalle=f"plantilla: {fallo_plantilla} | texto libre: {error}",
-                referencia=referencia,
-            )
+    if despachados:
+        logger.info("Salieron %d aviso(s) que esperaban el fin de la noche", despachados)
+    return despachados

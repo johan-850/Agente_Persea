@@ -28,6 +28,9 @@ import base64
 import json
 import os
 from dataclasses import dataclass
+from datetime import time
+
+from app.horario import SILENCIO_FIN, SILENCIO_INICIO, es_hora_de_silencio
 
 # atributo -> (variable de entorno, valor por defecto)
 _VARIABLES: dict[str, tuple[str, str | int]] = {
@@ -193,5 +196,11 @@ def revisar() -> Revision:
     hora = _crudo("HORA_RESUMEN_DIARIO")
     if hora and (not hora.isdigit() or not 0 <= int(hora) <= 23):
         faltantes.append(f"HORA_RESUMEN_DIARIO tiene que ser una hora de 0 a 23, no {hora!r}")
+    elif hora and any(es_hora_de_silencio(time(int(hora), minuto)) for minuto in (0, 30)):
+        # El diario sale en punto y el semanal a la media: miran los dos.
+        avisos.append(
+            f"HORA_RESUMEN_DIARIO={hora}: los resumenes saldrian de noche, cuando el agente "
+            f"no le escribe a nadie por su cuenta ({SILENCIO_INICIO:%H:%M} a {SILENCIO_FIN:%H:%M})"
+        )
 
     return Revision(faltantes=faltantes, avisos=avisos)

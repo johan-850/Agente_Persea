@@ -14,12 +14,13 @@ migraciones/
   003_mensajes_procesados.sql descarte de reenvíos + cola persistente
   004_envios.sql              auditoría de lo que se le manda a los admins
   005_bucket_fotos.sql        el bucket privado donde se archivan las fotos
+  006_envios_aplazados.sql    las alertas que esperan a la mañana (depende de 004)
 ```
 
 **Son idempotentes**: todo va con `if not exists`. Correrlas sobre una base que
 ya las tiene no cambia nada ni borra datos, así que ante la duda se pueden
-volver a pasar. El orden importa solo por una dependencia: `fotos` referencia
-`monitoreos`.
+volver a pasar. El orden importa solo por dos dependencias: `fotos` referencia
+`monitoreos`, y `006` le agrega una columna a `envios`.
 
 Hay una más, aparte y fuera del orden:
 

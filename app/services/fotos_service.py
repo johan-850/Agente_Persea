@@ -8,6 +8,7 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 
 from app.db.supabase_client import get_client
+from app.horario import cuando_legible
 from app.services import (
     envios_service,
     meta_whatsapp_service,
@@ -57,20 +58,24 @@ def _limpiar_para_nombre(valor: str | None, defecto: str) -> str:
     return limpio or defecto
 
 
-def _monitoreo_relacionado(remitente: str) -> dict | None:
-    """Ultimo reporte del mismo remitente dentro de la ventana.
+def _monitoreo_relacionado(remitente: str, momento: datetime) -> dict | None:
+    """Ultimo reporte del mismo remitente en las dos horas previas a la foto.
 
     Es una heuristica: si la monitora manda las fotos antes del texto, o pasan
     mas de dos horas, la foto queda sin asociar. Se prefiere eso a colgarla del
     reporte equivocado.
+
+    La ventana se cuenta desde que se mando la foto, no desde que llego: una
+    foto que Meta entrega con dias de atraso no puede terminar colgada del
+    reporte que la misma monitora mando hoy.
     """
-    desde = (datetime.now(timezone.utc) - VENTANA_ASOCIACION).isoformat()
     filas = (
         get_client()
         .table("monitoreos")
         .select("id, finca, lote, es_alerta")
         .eq("remitente", remitente)
-        .gte("fecha_hora", desde)
+        .gte("fecha_hora", (momento - VENTANA_ASOCIACION).isoformat())
+        .lte("fecha_hora", momento.isoformat())
         .order("fecha_hora", desc=True)
         .limit(1)
         .execute()
@@ -79,19 +84,22 @@ def _monitoreo_relacionado(remitente: str) -> dict | None:
     return filas[0] if filas else None
 
 
-def _ya_hubo_aviso_reciente(monitoreo: dict | None, remitente: str) -> bool:
+def _ya_hubo_aviso_reciente(monitoreo: dict | None, remitente: str, momento: datetime) -> bool:
     """Si ya se aviso por otra foto de la misma visita, no se repite.
 
     Se consulta ANTES de insertar la foto actual, para que no se encuentre a
     si misma.
+
+    La visita se cuenta alrededor de la foto y no solo hacia atras: si la foto
+    llego tarde, otra de la misma visita pudo haber avisado antes que ella.
     """
-    desde = (datetime.now(timezone.utc) - VENTANA_AVISO_REPETIDO).isoformat()
     consulta = (
         get_client()
         .table("fotos")
         .select("id")
         .eq("es_alerta", True)
-        .gte("fecha_hora", desde)
+        .gte("fecha_hora", (momento - VENTANA_AVISO_REPETIDO).isoformat())
+        .lte("fecha_hora", (momento + VENTANA_AVISO_REPETIDO).isoformat())
     )
     if monitoreo:
         consulta = consulta.eq("monitoreo_id", monitoreo["id"])
@@ -197,33 +205,45 @@ def reasignar_fotos(remitente: str, monitoreo: dict) -> int:
     return len(pendientes)
 
 
-def _ruta_archivo(monitoreo: dict | None, media_id: str, mime_type: str) -> str:
+def _ruta_archivo(monitoreo: dict | None, media_id: str, mime_type: str, momento: datetime) -> str:
     """Ruta dentro del bucket, agrupada por mes y con finca y lote en el nombre
     para poder ubicar una foto sin consultar la base.
+
+    La fecha es la de la foto, que es la del registro, y no la de llegada.
     """
-    ahora = datetime.now(timezone.utc)
     extension = EXTENSIONES.get(mime_type, "bin")
     sufijo = media_id[-8:]
 
     if monitoreo:
         finca = _limpiar_para_nombre(monitoreo.get("finca"), "sin-finca")
         lote = _limpiar_para_nombre(monitoreo.get("lote"), "sin-lote")
-        nombre = f"{ahora:%Y-%m-%d}_{finca}_lote-{lote}_{sufijo}.{extension}"
+        nombre = f"{momento:%Y-%m-%d}_{finca}_lote-{lote}_{sufijo}.{extension}"
     else:
-        nombre = f"{ahora:%Y-%m-%d}_sin-reporte_{sufijo}.{extension}"
+        nombre = f"{momento:%Y-%m-%d}_sin-reporte_{sufijo}.{extension}"
 
-    return f"{ahora:%Y/%m}/{nombre}"
+    return f"{momento:%Y/%m}/{nombre}"
 
 
-def procesar_foto(media_id: str, remitente: str, caption: str | None = None) -> dict:
+def procesar_foto(
+    media_id: str,
+    remitente: str,
+    caption: str | None = None,
+    enviado_en: datetime | None = None,
+    responder: bool = True,
+) -> dict:
     """Descarga la foto, la describe, la archiva y la registra.
 
     Cada paso opcional (descripcion, archivo) se protege por separado: si el
     archivo falla no se pierde la descripcion, y si la descripcion falla la
     foto igual queda archivada.
+
+    `enviado_en` y `responder` como en procesar_mensaje_monitoreo: la foto se
+    registra con la hora en que se mando, y si llego tarde no se le pregunta
+    nada a la monitora.
     """
+    momento = (enviado_en or datetime.now(timezone.utc)).astimezone(timezone.utc)
     contenido, mime_type = meta_whatsapp_service.descargar_media(media_id)
-    monitoreo = _monitoreo_relacionado(remitente)
+    monitoreo = _monitoreo_relacionado(remitente, momento)
 
     descripcion = None
     plagas_sugeridas = []
@@ -240,7 +260,7 @@ def procesar_foto(media_id: str, remitente: str, caption: str | None = None) -> 
     storage_path = None
     try:
         storage_path = storage_service.subir_foto(
-            _ruta_archivo(monitoreo, media_id, mime_type), contenido, mime_type
+            _ruta_archivo(monitoreo, media_id, mime_type, momento), contenido, mime_type
         )
     except Exception:
         logger.exception("No se pudo archivar la foto %s", media_id)
@@ -248,9 +268,12 @@ def procesar_foto(media_id: str, remitente: str, caption: str | None = None) -> 
     motivo_alerta = evaluar_dano_en_foto(descripcion, plagas_sugeridas, danos_observados)
 
     # Se consulta antes del insert para que la foto actual no cuente.
-    hubo_aviso_reciente = _ya_hubo_aviso_reciente(monitoreo, remitente) if motivo_alerta else False
+    hubo_aviso_reciente = (
+        _ya_hubo_aviso_reciente(monitoreo, remitente, momento) if motivo_alerta else False
+    )
 
     registro = {
+        "fecha_hora": momento.isoformat(),
         "remitente": remitente,
         "media_id": media_id,
         "caption": caption,
@@ -269,7 +292,7 @@ def procesar_foto(media_id: str, remitente: str, caption: str | None = None) -> 
     # Foto suelta, sin texto, y esa persona reporto varios lotes: la
     # asociacion es una apuesta. Se pregunta antes que colgarla del lote
     # equivocado, que despues nadie corrige porque nadie lo nota.
-    if not caption:
+    if not caption and responder:
         candidatos = _lotes_candidatos(remitente)
         if len(candidatos) > 1 and not _ya_se_pregunto_por_fotos(remitente):
             _preguntar_de_que_lote_son(remitente, candidatos)
@@ -312,6 +335,10 @@ def _notificar_dano_en_foto(
     lote = (monitoreo or {}).get("lote") or "no especificado"
     descripcion = foto.get("descripcion") or "sin descripcion"
     sugeridas = foto.get("plagas_sugeridas") or []
+    remitente = foto.get("remitente") or "desconocido"
+    # Con la hora de la foto, por lo mismo que la alerta de un reporte: puede
+    # salir en la mañana por una foto de anoche, o por una que llego tarde.
+    quien = f"{remitente} {cuando_legible(foto['fecha_hora'])}" if foto.get("fecha_hora") else remitente
 
     vistos = [DANOS_RELEVANTES[d] for d in (danos or []) if d in DANOS_RELEVANTES]
     partes = []
@@ -327,6 +354,7 @@ def _notificar_dano_en_foto(
         f"Lote: {lote}\n"
         f"{hallazgo}\n"
         f"Descripción: {descripcion}\n"
+        f"Enviada por {quien}\n"
         "A confirmar en campo."
     )
 
@@ -339,7 +367,7 @@ def _notificar_dano_en_foto(
                 lote,
                 hallazgo,
                 "posible daño de plaga cuarentenaria en foto, a confirmar en campo",
-                foto.get("remitente") or "desconocido",
+                quien,
             ],
             respaldo=respaldo,
             tipo="alerta_foto",

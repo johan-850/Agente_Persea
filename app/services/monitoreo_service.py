@@ -3,7 +3,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from app.db.supabase_client import get_client
-from app.horario import hoy, limites_utc
+from app.horario import cuando_legible, fecha_de, hoy, limites_utc
 from app.services import consultas_service, fotos_service
 from app.services import meta_whatsapp_service as whatsapp_service
 from app.services.alertas_monitoreo_service import (
@@ -170,18 +170,21 @@ def _pedir_lote(remitente: str, sin_lote: list[dict]) -> None:
         logger.exception("No se pudo pedir el lote a %s", remitente)
 
 
-def _ya_se_registro_hoy(texto: str, remitente: str) -> dict | None:
-    """El mismo reporte, de la misma persona, ya guardado hoy.
+def _ya_se_registro(texto: str, remitente: str, fecha: str) -> dict | None:
+    """El mismo reporte, de la misma persona, ya guardado ese dia.
 
     El descarte por wamid solo atrapa los reenvios de Meta. Si la monitora
     cree que su reporte no entro y lo manda de nuevo, es un mensaje distinto
     con otro wamid: se guardaba dos veces y podia alertar dos veces.
 
+    El dia es el del mensaje, no el de hoy: si Meta entrega tarde el primer
+    envio, su copia esta guardada en el dia en que se mando.
+
     Se comparan los textos en memoria y no con un filtro en la consulta
     porque un reporte de jornada pasa del millar de caracteres y no tiene por
     que caber en una URL.
     """
-    desde, hasta = limites_utc(hoy())
+    desde, hasta = limites_utc(fecha)
     filas = (
         get_client()
         .table("monitoreos")
@@ -208,7 +211,12 @@ def _texto_del_lote(extraido: dict) -> str:
     return " ".join(str(p) for p in partes)
 
 
-def procesar_mensaje_monitoreo(texto: str, remitente: str) -> list[dict]:
+def procesar_mensaje_monitoreo(
+    texto: str,
+    remitente: str,
+    enviado_en: datetime | None = None,
+    responder: bool = True,
+) -> list[dict]:
     """Guarda un registro por lote y avisa solo de los lotes que lo ameritan.
 
     Las reglas duras se evaluan por lote, no sobre el mensaje completo. Un
@@ -216,27 +224,38 @@ def procesar_mensaje_monitoreo(texto: str, remitente: str) -> list[dict]:
     evaluarlo entero contagiaba la alerta a todos: el lote 10, con acaro y
     mosca blanca, salio marcado como plaga cuarentenaria porque el lote 3 del
     mismo mensaje tenia stenoma.
+
+    `enviado_en` es cuando lo mando la monitora, y es la hora que lleva el
+    registro: un reporte que Meta entrega tarde cuenta en el dia en que se
+    hizo, no en el que llego. Con `responder` en False —llego tarde— se guarda
+    y alerta igual, pero a quien lo mando no se le contesta nada: ni se le
+    pide el lote ni se responde su pregunta.
     """
-    # Puede ser la respuesta al lote que pedimos, no un reporte nuevo.
-    if _completar_lote_pendiente(texto, remitente):
+    momento = enviado_en or datetime.now(timezone.utc)
+
+    # Puede ser la respuesta al lote que pedimos, no un reporte nuevo. Solo
+    # mientras la conversacion sigue abierta: un "12" que llega horas despues
+    # ya no contesta a nada, y colgarlo del reporte pendiente seria adivinar.
+    if responder and _completar_lote_pendiente(texto, remitente):
         return []
 
-    repetido = _ya_se_registro_hoy(texto, remitente)
+    repetido = _ya_se_registro(texto, remitente, fecha_de(momento))
     if repetido:
         logger.info(
             "Reporte repetido de %s, ya guardado como %s; no se duplica",
             remitente,
             repetido["id"],
         )
-        try:
-            lote = repetido.get("lote")
-            whatsapp_service.enviar_mensaje(
-                remitente,
-                f"Ese reporte ya lo tenía registrado{f' (lote {lote})' if lote else ''}, "
-                "así que no lo dupliqué. Si querías corregir algo, dime qué cambia.",
-            )
-        except Exception:
-            logger.exception("No se pudo avisar del reporte repetido a %s", remitente)
+        if responder:
+            try:
+                lote = repetido.get("lote")
+                whatsapp_service.enviar_mensaje(
+                    remitente,
+                    f"Ese reporte ya lo tenía registrado{f' (lote {lote})' if lote else ''}, "
+                    "así que no lo dupliqué. Si querías corregir algo, dime qué cambia.",
+                )
+            except Exception:
+                logger.exception("No se pudo avisar del reporte repetido a %s", remitente)
         return []
 
     extraidos = extraer_reportes_monitoreo(texto)
@@ -249,7 +268,12 @@ def procesar_mensaje_monitoreo(texto: str, remitente: str) -> list[dict]:
         # se sabe que no era un reporte: decidirlo antes obligaria a clasificar
         # el mensaje dos veces, una llamada al modelo de mas por cada mensaje.
         if consultas_service.es_administrador(remitente):
-            consultas_service.responder(texto, remitente)
+            if responder:
+                consultas_service.responder(texto, remitente)
+            else:
+                logger.warning(
+                    "Pregunta de %s que llego tarde, no se contesta: %r", remitente, texto[:120]
+                )
         return []
 
     por_lote = [evaluar_alerta_monitoreo(_texto_del_lote(e)) for e in extraidos]
@@ -298,7 +322,7 @@ def procesar_mensaje_monitoreo(texto: str, remitente: str) -> list[dict]:
             )
 
         registro = {
-            "fecha_hora": datetime.now(timezone.utc).isoformat(),
+            "fecha_hora": momento.isoformat(),
             "remitente": remitente,
             "texto_original": texto,
             **extraido,
@@ -312,7 +336,7 @@ def procesar_mensaje_monitoreo(texto: str, remitente: str) -> list[dict]:
             _notificar_alerta(guardado)
 
     sin_lote = [g for g in guardados if not g.get("lote")]
-    if sin_lote:
+    if sin_lote and responder:
         _pedir_lote(remitente, sin_lote)
 
     return guardados
@@ -324,6 +348,13 @@ def _notificar_alerta(monitoreo: dict) -> None:
     finca = monitoreo.get("finca") or "no especificada"
     lote = monitoreo.get("lote") or "no especificado"
     remitente = monitoreo.get("remitente") or "desconocido"
+    # Con la hora del reporte. Una alerta que espero la noche, o que sale de un
+    # mensaje que Meta entrego tarde, no puede leerse como un hallazgo de ahora.
+    quien = (
+        f"{remitente} {cuando_legible(monitoreo['fecha_hora'])}"
+        if monitoreo.get("fecha_hora")
+        else remitente
+    )
 
     # El hallazgo que disparo la alerta va primero. Un bordeo trae quince
     # hallazgos rutinarios y el stenoma quedaba en el medio de la lista, o
@@ -339,12 +370,13 @@ def _notificar_alerta(monitoreo: dict) -> None:
         f"Finca: {finca}\n"
         f"Lote: {lote}\n"
         f"Plagas/hallazgos: {plagas}\n"
+        f"Reportado por {quien}\n"
         f"Reporte original:\n{monitoreo['texto_original']}"
     )
 
     whatsapp_service.enviar_plantilla_a_administradores(
         whatsapp_service.PLANTILLA_ALERTA,
-        [prioridad, finca, lote, plagas, tipo_alerta, remitente],
+        [prioridad, finca, lote, plagas, tipo_alerta, quien],
         respaldo=respaldo,
         tipo="alerta_reporte",
         referencia=f"monitoreo:{monitoreo.get('id')}",

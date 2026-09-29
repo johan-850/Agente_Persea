@@ -18,7 +18,15 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.horario import JORNADA_FIN, JORNADA_INICIO, ZONA, limites_utc  # noqa: E402
+from app.horario import (  # noqa: E402
+    JORNADA_FIN,
+    JORNADA_INICIO,
+    ZONA,
+    cuando_legible,
+    en_silencio,
+    fecha_de,
+    limites_utc,
+)
 
 CASOS = []
 
@@ -68,6 +76,41 @@ revisar(
 
 revisar("la jornada arranca a las 7:00", JORNADA_INICIO.strftime("%H:%M"), "07:00")
 revisar("y cierra a las 16:30", JORNADA_FIN.strftime("%H:%M"), "16:30")
+
+# La noche, en que las alertas esperan. Los bordes y la medianoche.
+for hora, minuto, de_noche in (
+    (19, 59, False),
+    (20, 0, True),
+    (23, 59, True),
+    (0, 0, True),
+    (1, 55, True),   # la hora a la que llego la respuesta del 29 de septiembre
+    (5, 59, True),
+    (6, 0, False),
+    (12, 0, False),
+    (18, 0, False),  # el resumen diario
+    (18, 30, False),  # el semanal
+):
+    revisar(
+        f"a las {hora:02d}:{minuto:02d} {'es' if de_noche else 'no es'} de noche",
+        en_silencio(datetime(2026, 9, 29, hora, minute=minuto, tzinfo=ZONA)),
+        de_noche,
+    )
+
+# El servidor vive en UTC: la noche es la de las fincas, no la suya.
+revisar("las 06:55 UTC son la 1:55 en Colombia: de noche",
+        en_silencio(datetime(2026, 9, 29, 6, 55, tzinfo=timezone.utc)), True)
+revisar("las 01:00 UTC son las 20:00 del dia anterior: de noche",
+        en_silencio(datetime(2026, 9, 29, 1, 0, tzinfo=timezone.utc)), True)
+revisar("las 14:00 UTC son las 9:00: de dia",
+        en_silencio(datetime(2026, 9, 29, 14, 0, tzinfo=timezone.utc)), False)
+
+revisar("la hora de un mensaje se dice en la de las fincas",
+        cuando_legible(datetime(2026, 9, 24, 0, 40, 22, tzinfo=timezone.utc)),
+        "el 23 de septiembre a las 19:40")
+revisar("y se lee igual desde el texto que devuelve la base",
+        cuando_legible("2026-09-24T00:40:22+00:00"), "el 23 de septiembre a las 19:40")
+revisar("el dia de un mensaje es el de las fincas",
+        fecha_de(datetime(2026, 9, 24, 0, 40, tzinfo=timezone.utc)), "2026-09-23")
 
 
 def main() -> int:

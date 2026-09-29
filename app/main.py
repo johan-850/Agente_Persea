@@ -25,8 +25,15 @@ from app.api.routes_meta_whatsapp import recuperar_cola  # noqa: E402
 from app.api.routes_meta_whatsapp import router as meta_whatsapp_router  # noqa: E402
 from app.api.routes_monitoreo import router as monitoreo_router  # noqa: E402
 from app.api.seguridad import exigir_api_key  # noqa: E402
-from app.horario import JORNADA_FIN, JORNADA_INICIO, ZONA  # noqa: E402
+from app.horario import (  # noqa: E402
+    JORNADA_FIN,
+    JORNADA_INICIO,
+    SILENCIO_FIN,
+    SILENCIO_INICIO,
+    ZONA,
+)
 from app.services.cola_mensajes import en_cola, esperar_vaciado  # noqa: E402
+from app.services.meta_whatsapp_service import despachar_aplazados  # noqa: E402
 from app.services.resumen_semanal_service import enviar_resumen_semanal  # noqa: E402
 from app.services.resumen_service import enviar_resumen_diario  # noqa: E402
 
@@ -70,6 +77,17 @@ def programar(planificador, hora: int) -> None:
         minutes=MINUTOS_ENTRE_RECUPERACIONES,
         id="recuperar_pendientes",
         # Si una vuelta se demora, no se amontonan: la siguiente la cubre.
+        max_instances=1,
+        coalesce=True,
+    )
+
+    # Las alertas que esperaron la noche. De noche la tarea no hace nada; en
+    # la primera vuelta despues de las 6:00 salen.
+    planificador.add_job(
+        despachar_aplazados,
+        "interval",
+        minutes=MINUTOS_ENTRE_RECUPERACIONES,
+        id="despachar_aplazados",
         max_instances=1,
         coalesce=True,
     )
@@ -125,15 +143,19 @@ def iniciar_scheduler():
     programar(scheduler, config.HORA_RESUMEN_DIARIO)
     scheduler.start()
 
-    # Lo que quedo en la cola cuando murio el proceso anterior. Despues lo
-    # sigue haciendo el planificador cada pocos minutos.
+    # Lo que quedo en la cola cuando murio el proceso anterior, y las alertas
+    # que esperaban la mañana si se arranca de dia. Despues lo sigue haciendo
+    # el planificador cada pocos minutos.
     recuperar_cola()
+    despachar_aplazados()
 
     log = logging.getLogger("main")
     log.info(
-        "Jornada de campo %s a %s (hora de Colombia)",
+        "Jornada de campo %s a %s; de %s a %s las alertas esperan a la mañana (hora de Colombia)",
         JORNADA_INICIO.strftime("%H:%M"),
         JORNADA_FIN.strftime("%H:%M"),
+        SILENCIO_INICIO.strftime("%H:%M"),
+        SILENCIO_FIN.strftime("%H:%M"),
     )
     for identificador, que in (("resumen_diario", "diario"), ("resumen_semanal", "semanal")):
         log.info("Resumen %s: proximo envio %s", que, scheduler.get_job(identificador).next_run_time)
