@@ -140,6 +140,12 @@ activo_y_despues = reportes_por_lote([
 ])
 revisar("un foco que estuvo ACTIVO no se borra porque el cierre no lo repita",
         activo_y_despues[0]["plagas_observadas"], ["mosca blanca - foco ACTIVO", "mosca blanca - foco controlado"])
+dicho_distinto = reportes_por_lote([
+    fila(1, "17:15", "buena vista", "8", ["cochinilla"], alerta=True),
+    fila(2, "21:30", "buena vista", "8", ["cochinilla en pedúnculos de 2 frutos", "suelda"], alerta=True),
+])
+revisar("el mismo hallazgo dicho de dos formas va una vez, con la descripcion del cierre",
+        _lotes_que_atender(dicho_distinto), "buena vista lote 8 - cochinilla en pedúnculos de 2 frutos")
 revisar("el mismo lote en dos dias son dos reportes",
         len(reportes_por_lote([fila(1, "15:00", "rivera", "14", ["stenoma"]),
                                fila(2, "15:00", "rivera", "14", ["stenoma"], dia="30")])), 2)

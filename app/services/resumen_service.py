@@ -4,7 +4,7 @@ from datetime import datetime
 from app.db.supabase_client import get_client
 from app.horario import fecha_de, hoy, limites_utc
 from app.services import meta_whatsapp_service as whatsapp_service
-from app.services.alertas_monitoreo_service import hallazgos_que_alertan, normalizar
+from app.services.alertas_monitoreo_service import clave_de_alerta, hallazgos_que_alertan, normalizar
 
 
 def _monitoreos_del_dia(fecha: str) -> list[dict]:
@@ -174,8 +174,13 @@ def _motivo_corto(monitoreo: dict, maximo: int = 90) -> str:
     El hallazgo en cambio dice la especie y el estado del foco, que es lo que
     el administrador necesita para decidir a donde ir.
     """
-    criticos = hallazgos_que_alertan(monitoreo.get("plagas_observadas"))
-    motivo = "; ".join(str(c) for c in criticos) or (monitoreo.get("tipo_alerta") or "alerta")
+    # En un lote que junta el aviso de mediodia y el cierre, el mismo hallazgo
+    # puede venir dicho de dos formas ("cochinilla", "cochinilla en pedúnculos
+    # de 2 frutos"): va una vez, con la descripcion mas reciente.
+    criticos: dict[str, str] = {}
+    for hallazgo in hallazgos_que_alertan(monitoreo.get("plagas_observadas")):
+        criticos[clave_de_alerta(hallazgo) or str(hallazgo)] = str(hallazgo)
+    motivo = "; ".join(criticos.values()) or (monitoreo.get("tipo_alerta") or "alerta")
     if len(motivo) > maximo:
         motivo = motivo[: maximo - 3].rstrip() + "..."
     return motivo
