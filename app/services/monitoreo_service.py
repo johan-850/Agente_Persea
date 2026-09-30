@@ -7,6 +7,7 @@ from app.horario import cuando_legible, fecha_de, hoy, limites_utc
 from app.services import consultas_service, fotos_service
 from app.services import meta_whatsapp_service as whatsapp_service
 from app.services.alertas_monitoreo_service import (
+    claves_de_alerta,
     evaluar_alerta_monitoreo,
     hallazgos_que_alertan,
 )
@@ -201,6 +202,59 @@ def _ya_se_registro(texto: str, remitente: str, fecha: str) -> dict | None:
     return None
 
 
+def _ya_se_aviso_hoy(monitoreo: dict, momento: datetime) -> bool:
+    """Si lo que hace alertar a este reporte ya se aviso hoy, en ese lote.
+
+    La monitora avisa el hallazgo cuando lo encuentra y lo vuelve a contar en
+    el reporte de cierre. Cada uno disparaba su alerta: el 29 de septiembre
+    llegaron cuatro por dos hallazgos, y una alerta que se repite enseña a no
+    leerlas. El reporte se guarda igual y cuenta en el resumen; lo que no se
+    repite es el aviso.
+
+    Solo se calla si TODO lo que alerta ya se aviso: si el cierre trae una
+    cuarentenaria nueva, la alerta sale completa. Un accidente se avisa
+    siempre, y si el aviso anterior fallo, este sale.
+    """
+    claves = claves_de_alerta(monitoreo.get("plagas_observadas"))
+    finca, lote = monitoreo.get("finca"), monitoreo.get("lote")
+    if not claves or not finca or not lote or "accidente" in claves:
+        return False
+
+    desde, hasta = limites_utc(fecha_de(momento))
+    previos = (
+        get_client()
+        .table("monitoreos")
+        .select("id, plagas_observadas")
+        .eq("finca", finca)
+        .eq("lote", str(lote))
+        .eq("es_alerta", True)
+        .gte("fecha_hora", desde)
+        .lt("fecha_hora", hasta)
+        .neq("id", monitoreo["id"])
+        .execute()
+        .data
+    )
+    relacionados = [p for p in previos if claves_de_alerta(p.get("plagas_observadas")) & claves]
+    avisadas = set()
+    for previo in relacionados:
+        avisadas |= claves_de_alerta(previo.get("plagas_observadas"))
+    if not claves <= avisadas:
+        return False
+
+    salieron = (
+        get_client()
+        .table("envios")
+        .select("id")
+        .eq("tipo", "alerta_reporte")
+        .in_("referencia", [f"monitoreo:{p['id']}" for p in relacionados])
+        .neq("estado", "fallido")
+        .limit(1)
+        .execute()
+        .data
+    )
+    return bool(salieron)
+
+
 def _texto_del_lote(extraido: dict) -> str:
     """Lo que la extraccion asigno a ESE lote, para evaluarlo por separado."""
     partes = [
@@ -333,7 +387,15 @@ def procesar_mensaje_monitoreo(
         guardados.append(guardado)
 
         if guardado.get("es_alerta"):
-            _notificar_alerta(guardado)
+            if _ya_se_aviso_hoy(guardado, momento):
+                logger.info(
+                    "Reporte %s: lo de finca %s lote %s ya se aviso hoy; no se repite la alerta",
+                    guardado.get("id"),
+                    guardado.get("finca"),
+                    guardado.get("lote"),
+                )
+            else:
+                _notificar_alerta(guardado)
 
     sin_lote = [g for g in guardados if not g.get("lote")]
     if sin_lote and responder:

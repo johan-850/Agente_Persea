@@ -301,6 +301,10 @@ Las 8 plagas cuarentenarias del cultivo (aguacate Hass) son *Heilipus lauri*, *H
 
 En mensajes multi-lote la regla se evalúa **por lote**, sobre el fragmento que habla de ese lote. Antes se evaluaba el mensaje completo y un `ACTIVO` del lote B marcaba también al lote A: el administrador recibía cinco lotes en alerta cuando el foco estaba en uno, y sin forma de saber en cuál. Queda una red de seguridad sobre el mensaje entero para lo que no se pudo repartir por lote, pero ya no contagia la prioridad.
 
+**Una alerta por hallazgo al día.** La monitora avisa un hallazgo cuando lo encuentra y lo vuelve a contar en el reporte de cierre. El segundo mensaje se guarda y cuenta en el resumen, pero no repite la alerta si todo lo que trae ya se avisó ese día en ese lote: la misma cuarentenaria, aunque se escriba distinto, o el mismo foco `ACTIVO`. Una cuarentenaria nueva en el lote sí avisa, un accidente avisa siempre, y si el primer aviso falló, el segundo sale. Por lo mismo, el resumen diario cuenta lotes y no mensajes.
+
+**`ACTIVO` lo escribe la monitora.** Si el mensaje no dice *activo* en ninguna parte, el agente lo quita de lo que extrajo el modelo. En la simulación del 29 de septiembre el modelo convirtió *"foco marcado"* en *"foco ACTIVO"*: con stenoma no cambió nada, pero con una plaga que no es cuarentenaria habría sido una alerta falsa.
+
 ## Restricciones de WhatsApp que condicionan el diseño
 
 Estas no son decisiones del proyecto, son límites de la plataforma:

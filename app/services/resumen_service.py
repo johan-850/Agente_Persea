@@ -1,9 +1,10 @@
 from collections import Counter
+from datetime import datetime
 
 from app.db.supabase_client import get_client
-from app.horario import hoy, limites_utc
+from app.horario import fecha_de, hoy, limites_utc
 from app.services import meta_whatsapp_service as whatsapp_service
-from app.services.alertas_monitoreo_service import hallazgos_que_alertan
+from app.services.alertas_monitoreo_service import hallazgos_que_alertan, normalizar
 
 
 def _monitoreos_del_dia(fecha: str) -> list[dict]:
@@ -32,6 +33,65 @@ def _fotos_del_dia(fecha: str) -> list[dict]:
         .execute()
         .data
     )
+
+
+def _clave_del_hallazgo(hallazgo: str) -> tuple[str, bool]:
+    """De que habla un hallazgo, sin lo que dice de el: "acaro - severidad 2"
+    y "ácaro - severidad 1-2-3" son el mismo hallazgo, contado dos veces.
+
+    Si uno dice ACTIVO y el otro no, se conservan los dos: un foco que estaba
+    ACTIVO a mediodia no deja de haberlo estado porque el cierre no lo repita.
+    """
+    plano = normalizar(str(hallazgo))
+    return plano.split(" - ")[0].strip(), "activo" in plano
+
+
+def reportes_por_lote(monitoreos: list[dict]) -> list[dict]:
+    """Junta en uno los reportes del mismo lote en el mismo dia.
+
+    La monitora avisa un hallazgo a media mañana y lo vuelve a contar en el
+    cierre: son dos mensajes y dos filas, pero un lote y un hallazgo. El
+    resumen contaba las filas: el 29 de septiembre dijo "14 reportes de lote,
+    4 con alerta" por 9 lotes y 2 hallazgos, y en "requieren atencion"
+    repetia dos lotes.
+
+    El estado es el del ultimo reporte, que es el que dice si el lote se
+    termino. Los hallazgos se juntan todos, para que no se pierda uno que se
+    aviso a mediodia y el cierre olvido; si un mismo hallazgo se conto dos
+    veces, queda con la descripcion mas reciente.
+
+    Los reportes sin lote no se juntan: no hay como saber si son del mismo.
+    """
+    grupos: dict = {}
+    for m in sorted(monitoreos, key=lambda m: (str(m.get("fecha_hora") or ""), m.get("id") or 0)):
+        if m.get("lote"):
+            dia = fecha_de(datetime.fromisoformat(str(m["fecha_hora"]))) if m.get("fecha_hora") else None
+            clave = (dia, m.get("finca"), str(m["lote"]))
+        else:
+            clave = ("sin lote", m.get("id"))
+        grupos.setdefault(clave, []).append(m)
+
+    def ultimo_dato(grupo: list[dict], campo: str):
+        return next((m[campo] for m in reversed(grupo) if m.get(campo) is not None), None)
+
+    lotes = []
+    for grupo in grupos.values():
+        hallazgos: dict[tuple, str] = {}
+        for m in grupo:
+            for hallazgo in m.get("plagas_observadas") or []:
+                # Reasignar conserva el lugar de la primera mencion y deja la
+                # descripcion de la ultima.
+                hallazgos[_clave_del_hallazgo(hallazgo)] = hallazgo
+        lotes.append({
+            **grupo[-1],
+            "ids": [i for m in grupo for i in (m.get("ids") or [m.get("id")])],
+            "plagas_observadas": list(hallazgos.values()),
+            "es_alerta": any(m.get("es_alerta") for m in grupo),
+            "lote_finalizado": ultimo_dato(grupo, "lote_finalizado"),
+            "tipo_alerta": ultimo_dato(grupo, "tipo_alerta"),
+            "prioridad": ultimo_dato(grupo, "prioridad"),
+        })
+    return lotes
 
 
 def _fotos_por_reporte(fotos: list[dict]) -> dict:
@@ -81,6 +141,18 @@ def _resumir_candidatas(conteo: Counter, con_dano: int) -> str:
     return "posibles: " + ", ".join(c for c, _ in conteo.most_common(2))
 
 
+def _fotos_de(por_foto: dict, item: dict) -> dict | None:
+    """Las fotos de un lote, sumando las de todos los reportes que se juntaron en el."""
+    entradas = [por_foto[i] for i in item.get("ids") or [item.get("id")] if i in por_foto]
+    if not entradas:
+        return None
+    return {
+        "total": sum(e["total"] for e in entradas),
+        "con_dano": sum(e["con_dano"] for e in entradas),
+        "candidatas": sum((e["candidatas"] for e in entradas), Counter()),
+    }
+
+
 def _texto_fotos(entrada: dict | None) -> str:
     if not entrada:
         return ""
@@ -110,13 +182,12 @@ def _motivo_corto(monitoreo: dict, maximo: int = 90) -> str:
 
 
 def _formatear_resumen(fecha: str, monitoreos: list[dict], fotos: list[dict] | None = None) -> str:
+    """El resumen en texto libre. Espera un registro por lote (reportes_por_lote)."""
     if not monitoreos:
         return f"📋 Resumen de monitoreo del día {fecha}\nNo se recibieron reportes."
 
     por_foto = _fotos_por_reporte(fotos or [])
-    # "reportes de lote" y no "lotes": un mismo lote puede aparecer dos veces
-    # en el dia si se le hizo monitoreo general y despues bordeo.
-    lineas = [f"📋 Resumen de monitoreo del día {fecha} — {len(monitoreos)} reportes de lote"]
+    lineas = [f"📋 Resumen de monitoreo del día {fecha} — {len(monitoreos)} lote(s) reportado(s)"]
 
     # Las alertas arriba. Con 39 reportes, un 🚨 en la linea 27 no lo ve nadie.
     alertas = [item for item in monitoreos if item.get("es_alerta")]
@@ -142,7 +213,7 @@ def _formatear_resumen(fecha: str, monitoreos: list[dict], fotos: list[dict] | N
             plagas = ", ".join(item.get("plagas_observadas") or []) or "sin hallazgos relevantes"
             lineas.append(
                 f"  Lote {lote} ({estado}){marca_alerta}: {plagas}"
-                f"{_texto_fotos(por_foto.get(item.get('id')))}"
+                f"{_texto_fotos(_fotos_de(por_foto, item))}"
             )
 
     sueltas = por_foto.get(None)
@@ -152,7 +223,7 @@ def _formatear_resumen(fecha: str, monitoreos: list[dict], fotos: list[dict] | N
     fotos_con_dano = sum(e["con_dano"] for e in por_foto.values())
     if alertas or fotos_con_dano:
         lineas.append(
-            f"\n⚠️ {len(alertas)} alerta(s) por reporte y {fotos_con_dano} foto(s) con daño hoy."
+            f"\n⚠️ {len(alertas)} lote(s) con alerta y {fotos_con_dano} foto(s) con daño hoy."
         )
 
     return "\n".join(lineas)
@@ -175,7 +246,7 @@ def _formatear_detalle_plano(monitoreos: list[dict], fotos: list[dict] | None = 
         lote = item.get("lote") or "sin lote"
         estado = "finalizado" if item.get("lote_finalizado") else "pendiente"
         plagas = ", ".join(item.get("plagas_observadas") or []) or "sin hallazgos"
-        entrada = por_foto.get(item.get("id"))
+        entrada = _fotos_de(por_foto, item)
         fotos_txt = ""
         if entrada and entrada["con_dano"]:
             fotos_txt = f" ({entrada['con_dano']}/{entrada['total']} fotos con daño)"
@@ -217,21 +288,23 @@ def _cobertura(monitoreos: list[dict], fotos: list[dict] | None = None) -> str:
 
 def enviar_resumen_diario(fecha: str | None = None) -> str:
     fecha = fecha or hoy()
-    monitoreos = _monitoreos_del_dia(fecha)
+    # Un registro por lote: "Reportes de lote" y "Con alerta" cuentan lotes,
+    # no los mensajes que se mandaron sobre cada uno.
+    lotes = reportes_por_lote(_monitoreos_del_dia(fecha))
     fotos = _fotos_del_dia(fecha)
-    texto = _formatear_resumen(fecha, monitoreos, fotos)
-    alertas = [item for item in monitoreos if item.get("es_alerta")]
+    texto = _formatear_resumen(fecha, lotes, fotos)
+    alertas = [item for item in lotes if item.get("es_alerta")]
 
-    comunes = [fecha, str(len(monitoreos)), str(len(alertas))]
+    comunes = [fecha, str(len(lotes)), str(len(alertas))]
 
     whatsapp_service.enviar_plantilla_a_administradores(
         whatsapp_service.PLANTILLAS_RESUMEN,
         [
             # v2: cada cosa en su hueco, con el cuerpo de la plantilla poniendo
             # los saltos de linea que un parametro no puede llevar.
-            comunes + [_lotes_que_atender(monitoreos), _cobertura(monitoreos, fotos)],
+            comunes + [_lotes_que_atender(lotes), _cobertura(lotes, fotos)],
             # v1: todo en un solo hueco, por si la v2 aun no esta aprobada.
-            comunes + [_formatear_detalle_plano(monitoreos, fotos)],
+            comunes + [_formatear_detalle_plano(lotes, fotos)],
         ],
         respaldo=texto,
         tipo="resumen_diario",

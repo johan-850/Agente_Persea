@@ -106,6 +106,14 @@ CASOS_ALERTA = [
         True,
     ),
     (
+        # En la simulacion del 29 de septiembre el modelo convirtio "foco
+        # marcado" en "foco ACTIVO". Con acaro, eso es una alerta falsa.
+        "Un foco marcado no es un foco ACTIVO: sin la palabra, el acaro no alerta",
+        "Finca alfa lote #12, en la línea 3 hay un foco marcado de ácaro, severidad 2. "
+        "Se marcó el árbol. 1 monitora",
+        False,
+    ),
+    (
         "Un foco marcado ACTIVO si, aunque la plaga no sea cuarentenaria",
         "Finca alfa, monitoreo general lote #5, se observa mosca blanca y un foco de "
         "acaro ACTIVO. Se finaliza lote. 1 monitora",

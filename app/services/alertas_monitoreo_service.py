@@ -139,6 +139,43 @@ def grupo_cuarentenaria(texto: str) -> str | None:
     return None
 
 
+# Lo que acompaña a ACTIVO en un hallazgo sin decir de que plaga es.
+_SIN_PLAGA = {"foco", "focos", "activo", "activos", "de", "del", "la", "las", "el", "los", "un", "una", "en", "con"}
+
+
+def clave_de_alerta(hallazgo: str) -> str | None:
+    """Por que alerta ese hallazgo, dicho igual en cada mensaje que habla de el.
+
+    La monitora avisa el stenoma cuando lo encuentra ("Stenoma catenifer - 3
+    ramas afectadas") y lo vuelve a contar en el cierre ("Stenoma en rama,
+    foco marcado en la línea 4"). La redaccion cambia; la plaga no. Con la
+    clave se reconoce que es el mismo hallazgo, para no avisarlo dos veces.
+
+    Va en el mismo orden que evaluar_alerta_monitoreo: una cuarentenaria
+    manda sobre el ACTIVO que la acompañe.
+    """
+    plano = normalizar(str(hallazgo))
+    grupo = grupo_cuarentenaria(plano)
+    if grupo:
+        return grupo
+    for termino in GRUPOS_CUARENTENARIOS_SIN_ESPECIE:
+        if re.search(rf"\b{termino}\b", plano):
+            return "cochinillas o escamas sin especie"
+    for palabra in PALABRAS_ACCIDENTE:
+        if normalizar(palabra) in plano:
+            return "accidente"
+    if _PATRON_ACTIVO.search(plano):
+        nombre = plano.split(" - ")[0]
+        palabras = [p for p in re.findall(r"[a-z0-9]+", nombre) if p not in _SIN_PLAGA]
+        return "foco ACTIVO de " + (" ".join(palabras) or "plaga sin nombre")
+    return None
+
+
+def claves_de_alerta(plagas: list | None) -> set:
+    """Las claves de todo lo que alerta en un reporte."""
+    return {clave for clave in (clave_de_alerta(p) for p in plagas or []) if clave}
+
+
 def hallazgos_que_alertan(plagas: list | None) -> list:
     """Cuales de los hallazgos del lote son los que disparan la alerta.
 

@@ -29,6 +29,7 @@ from app.services.alertas_monitoreo_service import (
     grupo_cuarentenaria,
     hallazgos_que_alertan,
 )
+from app.services.resumen_service import reportes_por_lote
 
 logger = logging.getLogger("resumen_semanal")
 
@@ -218,6 +219,9 @@ def enviar_resumen_semanal(fecha: str | None = None) -> str:
     desde, hasta = limites_semana_utc(fecha)
 
     monitoreos, fotos = _registros(desde, hasta)
+    # Un reporte por lote y dia, como en el diario: el aviso de mediodia y el
+    # cierre del mismo lote son un reporte, no dos.
+    monitoreos = reportes_por_lote(monitoreos)
     texto = formatear(lunes, viernes, monitoreos, fotos)
     alertas = [m for m in monitoreos if m.get("es_alerta")]
 

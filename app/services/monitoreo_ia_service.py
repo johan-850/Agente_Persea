@@ -3,6 +3,7 @@ import re
 import unicodedata
 
 from app.services import modelo_ia
+from app.services.alertas_monitoreo_service import normalizar
 
 logger = logging.getLogger("monitoreo_ia")
 
@@ -108,8 +109,9 @@ Para cada lote extrae:
   para ESE lote, preservando detalles relevantes de severidad tal como
   aparecen en el texto (ej. "escamas - foco ACTIVO", "acaro - baja poblacion",
   "mosca blanca - alta poblacion"). Preserva la palabra "ACTIVO" en mayuscula
-  si el texto la usa asi, es una senal importante. No inventes plagas que no
-  esten en el texto.
+  si el texto la usa asi, es una senal importante. Pero NUNCA la escribas si
+  la monitora no la escribio: "foco marcado", "un foco" o "se marco el arbol"
+  no son un foco ACTIVO. No inventes plagas que no esten en el texto.
   Usa el catalogo de abajo para corregir la ESCRITURA de un nombre que ya
   corresponde a una entrada del catalogo ("pseudocercosphora" ->
   "pseudocercospora", "cefaleurus" -> "cephaleuros", "laury" -> "lauri"), y
@@ -129,7 +131,7 @@ Para cada lote extrae:
     (b) se nombra una cochinilla o una escama sin decir la especie. En aguacate
         Hass no hay ninguna que no sea cuarentenaria: cinco de las ocho del
         plan lo son, asi que "se observan cochinillas" cuenta como (a),
-    (c) el reporte marca un foco como "ACTIVO" en ESE lote,
+    (c) el reporte marca un foco como "ACTIVO" en ESE lote, con esa palabra,
     (d) hay un accidente o una persona herida.
   Una poblacion alta, una severidad 4 o mucho daño NO son alerta si la plaga
   no es cuarentenaria: son hallazgos rutinarios que van al resumen diario.
@@ -238,6 +240,49 @@ def _normalizar(item: dict) -> dict:
     return item
 
 
+_ACTIVO = re.compile(r"\bactivos?\b", re.IGNORECASE)
+
+
+def _sin_activo_inventado(item: dict, texto: str) -> dict:
+    """Quita el ACTIVO que la monitora no escribio.
+
+    ACTIVO es el marcador con que el equipo señala un foco urgente, y alerta
+    por si solo aunque la plaga no sea cuarentenaria. El 29 de septiembre una
+    monitora escribio "foco marcado en la línea 4" y el registro quedo "foco
+    ACTIVO". Con stenoma no cambio nada, porque alerta igual; con acaro habria
+    sido una alerta falsa. El prompt pide no hacerlo, pero un prompt no es una
+    garantia.
+
+    Si el mensaje dice ACTIVO en alguna parte, no se toca nada: repartirlo
+    entre los lotes es trabajo del modelo.
+    """
+    if _ACTIVO.search(normalizar(texto)):
+        return item
+
+    campos = [*(item.get("plagas_observadas") or []), item.get("nota"), item.get("tipo_alerta")]
+    if not any(_ACTIVO.search(str(valor)) for valor in campos):
+        return item
+
+    def limpiar(valor):
+        if not isinstance(valor, str) or not _ACTIVO.search(valor):
+            return valor
+        return re.sub(r"\s*\bactivos?\b", "", valor, flags=re.IGNORECASE).strip(" -,") or None
+
+    logger.warning(
+        "El modelo agrego un ACTIVO que el mensaje no dice; se quita: %r",
+        item.get("plagas_observadas"),
+    )
+    item["plagas_observadas"] = [p for p in (limpiar(p) for p in item.get("plagas_observadas") or []) if p]
+    item["nota"] = limpiar(item.get("nota"))
+    if _ACTIVO.search(str(item.get("tipo_alerta") or "")):
+        # La alerta del modelo era por ese ACTIVO. Si hay una cuarentenaria,
+        # las reglas la vuelven a encontrar en los hallazgos.
+        item["es_alerta"] = False
+        item["tipo_alerta"] = None
+        item["prioridad"] = None
+    return item
+
+
 def _extraccion_simulada(texto: str) -> dict:
     return {
         "finca": None,
@@ -278,4 +323,4 @@ def extraer_reportes_monitoreo(texto: str) -> list[dict]:
         # Dijo que si es reporte pero no extrajo lotes. Se guarda el texto
         # crudo antes que perder un hallazgo.
         return [_extraccion_simulada(texto)]
-    return [_normalizar(r) for r in reportes]
+    return [_sin_activo_inventado(_normalizar(r), texto) for r in reportes]
