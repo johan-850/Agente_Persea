@@ -291,7 +291,7 @@ Definidas en `app/services/alertas_monitoreo_service.py` y evaluadas sobre el te
 |---|---|---|
 | Plaga cuarentenaria del PLAN MIPE | alta | Umbral de daño **0%**: cualquier presencia obliga a actuar, se describa como se describa. |
 | Accidente (`accidente`, `herido`, `lesión`…) | alta | — |
-| La palabra **`activo`** | alta | Es el marcador que el propio equipo usa para señalar un foco urgente (*"Un foco de escamas ACTIVO"*). |
+| La palabra **`activo`** | alta | Es el marcador que el propio equipo usa para señalar un foco donde se encontraron individuos vivos (*"Un foco de escamas ACTIVO"*). |
 | Término de grupo sin especie (`escama`, `cochinilla`, `piojo harinoso`) | alta | **5 de las 8** cuarentenarias del plan son cochinillas o escamas, y el catálogo no tiene ninguna que *no* sea cuarentenaria en Hass. Lo que falta por confirmar es cuál de las cinco, no si lo es. |
 | Daño visible en una foto, o candidata cuarentenaria sugerida por la imagen | media | Se evalúa sobre lo que devuelve el análisis de la foto, no sobre el reporte escrito. Ver [Fotos](#fotos). |
 
@@ -303,7 +303,7 @@ En mensajes multi-lote la regla se evalúa **por lote**, sobre el fragmento que 
 
 **Una alerta por hallazgo al día.** La monitora avisa un hallazgo cuando lo encuentra y lo vuelve a contar en el reporte de cierre. El segundo mensaje se guarda y cuenta en el resumen, pero no repite la alerta si todo lo que trae ya se avisó ese día en ese lote: la misma cuarentenaria, aunque se escriba distinto, o el mismo foco `ACTIVO`. Una cuarentenaria nueva en el lote sí avisa, un accidente avisa siempre, y si el primer aviso falló, el segundo sale. Por lo mismo, el resumen diario cuenta lotes y no mensajes.
 
-**`ACTIVO` lo escribe la monitora.** Si el mensaje no dice *activo* en ninguna parte, el agente lo quita de lo que extrajo el modelo. En la simulación del 29 de septiembre el modelo convirtió *"foco marcado"* en *"foco ACTIVO"*: con stenoma no cambió nada, pero con una plaga que no es cuarentenaria habría sido una alerta falsa.
+**`ACTIVO` lo escribe la monitora.** Un foco activo es uno donde se encontraron individuos vivos, y eso lo constata quien está en el lote. Si el mensaje no dice *activo* en ninguna parte, el agente lo quita de lo que extrajo el modelo. En la simulación del 29 de septiembre el modelo convirtió *"foco marcado"* en *"foco ACTIVO"*: con stenoma no cambió nada, pero con una plaga que no es cuarentenaria habría sido una alerta falsa. La contraparte es que el equipo tiene que escribir la palabra: un *"nuevo foco de heilipus elegans, encontrando 15 larvas"* sin ella alerta igual, por ser cuarentenaria, pero no queda marcado como activo en el resumen semanal.
 
 ## Restricciones de WhatsApp que condicionan el diseño
 
