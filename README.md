@@ -305,6 +305,8 @@ En mensajes multi-lote la regla se evalúa **por lote**, sobre el fragmento que 
 
 **`ACTIVO` lo escribe la monitora.** Un foco activo es uno donde se encontraron individuos vivos, y eso lo constata quien está en el lote. Si el mensaje no dice *activo* en ninguna parte, el agente lo quita de lo que extrajo el modelo. En la simulación del 29 de septiembre el modelo convirtió *"foco marcado"* en *"foco ACTIVO"*: con stenoma no cambió nada, pero con una plaga que no es cuarentenaria habría sido una alerta falsa. La contraparte es que el equipo tiene que escribir la palabra: un *"nuevo foco de heilipus elegans, encontrando 15 larvas"* sin ella alerta igual, por ser cuarentenaria, pero no queda marcado como activo en el resumen semanal.
 
+**La labor, también.** Si el mensaje no dice qué labor se hacía —un aviso de mediodía casi nunca la dice—, queda vacía en vez de suponer *monitoreo general*. En el resumen, el lote toma la labor que dijo su cierre.
+
 ## Restricciones de WhatsApp que condicionan el diseño
 
 Estas no son decisiones del proyecto, son límites de la plataforma:

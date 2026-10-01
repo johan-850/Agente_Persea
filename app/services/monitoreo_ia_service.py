@@ -98,8 +98,11 @@ Para cada lote extrae:
   reporte, puedes dejarla null.
 - lote: SOLO el numero o identificador (ej. "14"), sin el simbolo # ni la
   palabra "lote".
-- tipo_labor: elige exactamente una de estas categorias: {", ".join(TIPOS_LABOR_MONITOREO)}.
-  Si no encaja claramente, usa "otro".
+- tipo_labor: la labor que el mensaje dice, en una de estas categorias:
+  {", ".join(TIPOS_LABOR_MONITOREO)}. Si dice una labor que no encaja
+  claramente, usa "otro". Si el mensaje no dice la labor, deja null: no la
+  supongas. Un aviso a mitad de jornada ("reporto hallazgo en el lote 7")
+  casi nunca la dice, y "monitoreo general" no es un valor por defecto.
 - monitoras: cantidad de monitoras/personas que hicieron el monitoreo, si se
   menciona (ej. "se contó con 1 monitora" = 1).
 - lote_finalizado: true si el texto dice "se finaliza lote" o similar; false
@@ -283,6 +286,27 @@ def _sin_activo_inventado(item: dict, texto: str) -> dict:
     return item
 
 
+# Las palabras con que un mensaje dice que labor se hizo. "Aplicacion" no
+# esta: "se informa para aplicacion" es una recomendacion, no la labor.
+_DICE_LA_LABOR = re.compile(r"\b(monitoreo|bordeo|capacitacion|dron)\b")
+
+
+def _sin_labor_supuesta(item: dict, texto: str) -> dict:
+    """Deja la labor vacia si el mensaje no la dice.
+
+    Un aviso a mitad de jornada ("Reporto hallazgo en finca rivera lote #7")
+    no dice que labor se estaba haciendo, y el modelo ponia "monitoreo
+    general" por defecto. En la simulacion del 29 y 30 de septiembre, el
+    hallazgo de mediodia de un bordeo quedo guardado como monitoreo general:
+    una consulta como "cuantos bordeos hubo" contaria mal. El prompt pide no
+    suponerla; esto lo asegura cuando el mensaje no nombra ninguna labor.
+    """
+    if item.get("tipo_labor") and not _DICE_LA_LABOR.search(normalizar(texto)):
+        logger.info("La labor %r no esta en el mensaje; queda vacia", item["tipo_labor"])
+        item["tipo_labor"] = None
+    return item
+
+
 def _extraccion_simulada(texto: str) -> dict:
     return {
         "finca": None,
@@ -323,4 +347,8 @@ def extraer_reportes_monitoreo(texto: str) -> list[dict]:
         # Dijo que si es reporte pero no extrajo lotes. Se guarda el texto
         # crudo antes que perder un hallazgo.
         return [_extraccion_simulada(texto)]
-    return [_sin_activo_inventado(_normalizar(r), texto) for r in reportes]
+    # Lo que el modelo agrega sin que el mensaje lo diga se quita.
+    return [
+        _sin_labor_supuesta(_sin_activo_inventado(_normalizar(r), texto), texto)
+        for r in reportes
+    ]

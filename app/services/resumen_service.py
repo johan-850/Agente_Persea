@@ -88,6 +88,8 @@ def reportes_por_lote(monitoreos: list[dict]) -> list[dict]:
             "plagas_observadas": list(hallazgos.values()),
             "es_alerta": any(m.get("es_alerta") for m in grupo),
             "lote_finalizado": ultimo_dato(grupo, "lote_finalizado"),
+            # El aviso de mediodia suele no decir la labor; el cierre si.
+            "tipo_labor": ultimo_dato(grupo, "tipo_labor"),
             "tipo_alerta": ultimo_dato(grupo, "tipo_alerta"),
             "prioridad": ultimo_dato(grupo, "prioridad"),
         })

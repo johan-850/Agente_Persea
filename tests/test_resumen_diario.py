@@ -146,6 +146,13 @@ dicho_distinto = reportes_por_lote([
 ])
 revisar("el mismo hallazgo dicho de dos formas va una vez, con la descripcion del cierre",
         _lotes_que_atender(dicho_distinto), "buena vista lote 8 - cochinilla en pedúnculos de 2 frutos")
+mediodia_sin_labor = fila(1, "18:40", "rivera", "20", ["marceño en rama y fruta"])
+cierre_de_bordeo = {**fila(2, "21:40", "rivera", "20", ["chancro"]), "tipo_labor": "bordeo"}
+revisar("la labor del lote es la del cierre, aunque el aviso de mediodia no la diga",
+        reportes_por_lote([{**mediodia_sin_labor, "tipo_labor": None}, cierre_de_bordeo])[0]["tipo_labor"], "bordeo")
+revisar("y no se pierde si despues llega otro aviso sin labor",
+        reportes_por_lote([cierre_de_bordeo, {**fila(3, "21:50", "rivera", "20", ["platinota"]), "tipo_labor": None}])
+        [0]["tipo_labor"], "bordeo")
 revisar("el mismo lote en dos dias son dos reportes",
         len(reportes_por_lote([fila(1, "15:00", "rivera", "14", ["stenoma"]),
                                fila(2, "15:00", "rivera", "14", ["stenoma"], dia="30")])), 2)

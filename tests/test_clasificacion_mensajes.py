@@ -122,6 +122,26 @@ CASOS_ALERTA = [
 ]
 
 
+# El modelo ponia "monitoreo general" por defecto cuando el mensaje no decia
+# la labor: el hallazgo de mediodia de un bordeo quedaba como monitoreo general.
+#
+# (descripcion, mensaje, labor_esperada)
+CASOS_LABOR = [
+    (
+        "Un aviso de mediodia no dice la labor",
+        "Reporto hallazgo en finca rivera lote #7: en la línea 4 se encontró stenoma en rama, "
+        "3 ramas afectadas y 1 larva viva.",
+        None,
+    ),
+    (
+        "Un cierre de bordeo si",
+        "Buenas tardes, finca La Rivera, bordeo del lote 18 de la línea 8 a la 14, se observan focos "
+        "de ácaro y chancro. No se finaliza lote. 1 monitora",
+        "bordeo",
+    ),
+]
+
+
 def main() -> int:
     if not os.environ.get("ANTHROPIC_API_KEY"):
         print("Falta ANTHROPIC_API_KEY: esta prueba necesita llamar al modelo.")
@@ -157,7 +177,19 @@ def main() -> int:
         else:
             print(f"  ok: {descripcion} -> {'alerta' if hubo_alerta else 'sin alerta'}")
 
-    total = len(CASOS) + len(CASOS_ALERTA)
+    print()
+    print("LA LABOR SOLO SI EL MENSAJE LA DICE")
+    for descripcion, mensaje, esperada in CASOS_LABOR:
+        reportes = extraer_reportes_monitoreo(mensaje)
+        obtenida = reportes[0].get("tipo_labor") if reportes else "(no extrajo reporte)"
+        if obtenida != esperada:
+            fallos += 1
+            print(f"  FALLA: {descripcion}")
+            print(f"    esperada {esperada!r}, obtenida {obtenida!r}")
+        else:
+            print(f"  ok: {descripcion} -> {obtenida!r}")
+
+    total = len(CASOS) + len(CASOS_ALERTA) + len(CASOS_LABOR)
     print()
     if fallos:
         print(f"{fallos} de {total} casos fallaron")
