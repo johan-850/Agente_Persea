@@ -244,7 +244,7 @@ curl -X POST http://127.0.0.1:8000/monitoreos \
 
 ## Fotos
 
-Los reportes casi siempre traen fotos de daños, larvas u hojas afectadas. El agente las descarga de WhatsApp, las describe, las archiva en Drive y las liga al reporte correspondiente.
+Los reportes casi siempre traen fotos de daños, larvas u hojas afectadas. El agente las descarga de WhatsApp, las describe, las archiva en el bucket privado de Supabase Storage y las liga al reporte correspondiente.
 
 **Asociación con el reporte.** Las monitoras mandan la foto en un mensaje *aparte* del texto, así que no viene identificada. Se resuelve así:
 

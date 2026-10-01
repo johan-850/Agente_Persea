@@ -17,12 +17,15 @@ import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
+from app import horario
 from app.db.supabase_client import get_client
 from app.horario import ZONA, hoy, limites_utc
 from app.services import meta_whatsapp_service, modelo_ia, reporte_original_service
 # Vive en admin_service; se importa aqui porque monitoreo_service y las
 # pruebas lo buscan en este modulo.
 from app.services.admin_service import es_administrador  # noqa: F401
+from app.services.alertas_monitoreo_service import evaluar_alerta_monitoreo, normalizar
+from app.services.resumen_service import reportes_por_lote
 
 logger = logging.getLogger("consultas")
 
@@ -35,8 +38,28 @@ MAX_FILAS = 40
 MAX_RONDAS = 3
 
 
+# La API de Supabase devuelve como mucho mil filas por consulta, y corta sin
+# avisar: una busqueda de varios meses responderia con las primeras mil como
+# si fueran todas.
+_PAGINA = 1000
+
+
 def _desde(dias: int) -> str:
     return (datetime.now(timezone.utc) - timedelta(days=max(1, dias))).isoformat()
+
+
+def _todas(armar) -> list[dict]:
+    """Todas las filas de la consulta que arma `armar`, de mil en mil.
+
+    `armar` devuelve la consulta nueva cada vez: el constructor de supabase-py
+    acumula parametros, asi que no se puede reutilizar entre paginas.
+    """
+    filas: list[dict] = []
+    while True:
+        pagina = armar().range(len(filas), len(filas) + _PAGINA - 1).execute().data
+        filas += pagina
+        if len(pagina) < _PAGINA:
+            return filas
 
 
 def _dia_local(fecha_hora) -> str:
@@ -113,27 +136,38 @@ def _buscar_plaga(plaga: str, dias: int = 30) -> dict:
     """En que lotes aparecio esa plaga. El filtro fino se hace en memoria
     porque plagas_observadas es una lista jsonb y no se puede buscar dentro
     con un ilike."""
-    filas = (
-        get_client()
+    filas = _todas(
+        lambda: get_client()
         .table("monitoreos")
         .select("fecha_hora, finca, lote, plagas_observadas, es_alerta")
         .gte("fecha_hora", _desde(dias))
         .order("fecha_hora", desc=True)
-        .execute()
-        .data
+        .order("id", desc=True)
     )
+    return _buscar_en(filas, plaga)
 
-    termino = str(plaga).lower()
+
+def _buscar_en(filas: list[dict], plaga: str) -> dict:
+    """La busqueda sobre filas ya leidas, sin tildes ni mayusculas.
+
+    Las monitoras escriben "acaro" y "ácaro" indistintamente, y la busqueda
+    comparaba tal cual: "¿donde ha salido ácaro?" encontraba 22 apariciones
+    y "acaro" 18, y cada una dejaba afuera a la otra.
+    """
+    termino = normalizar(str(plaga)).strip()
     encontrados = []
     for f in filas:
-        coincide = [p for p in (f.get("plagas_observadas") or []) if termino in str(p).lower()]
+        coincide = [p for p in (f.get("plagas_observadas") or []) if termino in normalizar(str(p))]
         if coincide:
             encontrados.append({
                 "dia": _dia_local(f["fecha_hora"]),
                 "finca": f.get("finca"),
                 "lote": f.get("lote"),
                 "hallazgos": coincide,
-                "alerto": f.get("es_alerta"),
+                # Si alerta ESTA plaga, no si el reporte alerto por otra cosa:
+                # con "poca poblacion de acaro" en un lote con stenoma, el
+                # modelo contestaba que el acaro habia alertado.
+                "alerta_por_esta_plaga": any(evaluar_alerta_monitoreo(str(h))[0] for h in coincide),
             })
 
     lotes = {f"{e['finca']} {e['lote']}" for e in encontrados}
@@ -145,17 +179,25 @@ def _buscar_plaga(plaga: str, dias: int = 30) -> dict:
 
 
 def _actividad_por_finca(dias: int = 7) -> dict:
-    filas = (
-        get_client()
+    filas = _todas(
+        lambda: get_client()
         .table("monitoreos")
-        .select("fecha_hora, finca, lote, es_alerta")
+        .select("id, fecha_hora, finca, lote, es_alerta, plagas_observadas")
         .gte("fecha_hora", _desde(dias))
-        .execute()
-        .data
+        .order("id")
     )
+    return _actividad(filas)
 
+
+def _actividad(filas: list[dict]) -> dict:
+    """Por finca: reportes de lote, lotes distintos y cuantos alertaron.
+
+    Cuenta como el resumen: el aviso de mediodia y el cierre del mismo lote,
+    el mismo dia, son un reporte. Contaba mensajes, y a "¿cuanto llevamos
+    hoy?" respondia 14 mientras el resumen de ese dia decia 9 lotes.
+    """
     resumen: dict = defaultdict(lambda: {"reportes": 0, "lotes": set(), "alertas": 0})
-    for f in filas:
+    for f in reportes_por_lote(filas):
         entrada = resumen[f.get("finca") or "sin finca"]
         entrada["reportes"] += 1
         if f.get("lote"):
@@ -173,21 +215,31 @@ def _actividad_por_finca(dias: int = 7) -> dict:
     }
 
 
-def _reportes_del_dia(fecha: str | None = None) -> list[dict]:
+def _reportes_del_dia(fecha: str | None = None) -> dict:
+    """Lo reportado en un dia, un registro por lote como en el resumen.
+
+    El total va aparte de la lista, por lo mismo que en estado_de_lote: si la
+    lista se recorta sin decirlo, el modelo cuenta lo que ve.
+    """
     fecha = fecha or hoy()
     desde, hasta = limites_utc(fecha)
     filas = (
         get_client()
         .table("monitoreos")
-        .select("finca, lote, tipo_labor, lote_finalizado, plagas_observadas, es_alerta")
+        .select("id, fecha_hora, finca, lote, tipo_labor, lote_finalizado, plagas_observadas, "
+                "es_alerta, tipo_alerta, prioridad")
         .gte("fecha_hora", desde)
         .lt("fecha_hora", hasta)
-        .order("finca")
-        .limit(MAX_FILAS)
         .execute()
         .data
     )
-    return filas
+    lotes = sorted(reportes_por_lote(filas), key=lambda l: (str(l.get("finca") or ""), str(l.get("lote") or "")))
+    campos = ("finca", "lote", "tipo_labor", "lote_finalizado", "plagas_observadas", "es_alerta")
+    return {
+        "lotes": [{c: l.get(c) for c in campos} for l in lotes[:MAX_FILAS]],
+        "total_lotes": len(lotes),
+        "con_alerta": sum(1 for l in lotes if l.get("es_alerta")),
+    }
 
 
 CONSULTAS = {
@@ -256,8 +308,10 @@ HERRAMIENTAS = [
     {
         "name": "actividad_por_finca",
         "description": (
-            "Cuanto se monitoreo por finca: reportes, lotes distintos y alertas. "
-            "Para '¿cuanto llevamos esta semana?' o '¿que lotes se han visto?'."
+            "Cuanto se monitoreo por finca: reportes de lote (uno por lote y dia, "
+            "aunque lleguen el aviso de mediodia y el cierre), lotes distintos y "
+            "cuantos alertaron. Para '¿cuanto llevamos esta semana?' o '¿que lotes "
+            "se han visto?'."
         ),
         "input_schema": {
             "type": "object",
@@ -266,7 +320,10 @@ HERRAMIENTAS = [
     },
     {
         "name": "reportes_del_dia",
-        "description": "Todo lo reportado en un dia concreto. Para '¿que entro hoy?'.",
+        "description": (
+            "Lo reportado en un dia concreto, un registro por lote, con el total "
+            "de lotes y cuantos alertaron. Para '¿que entro hoy?'."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -329,6 +386,24 @@ Al responder:
 - No mas de 1200 caracteres."""
 
 
+_DIAS_SEMANA = ("lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo")
+
+
+def _fecha_de_hoy() -> str:
+    """Que dia es, dicho para el modelo, que por si solo no lo sabe.
+
+    A "¿que entro el 30 de septiembre?" consulto el 30 de septiembre de 2024 y
+    respondio que no habia reportes. Con "ayer" o "el lunes" pasaba lo mismo.
+    """
+    dia = horario.ahora()
+    return (
+        f"Hoy es {_DIAS_SEMANA[dia.weekday()]} {dia.day} de {horario.MESES[dia.month - 1]} "
+        f"de {dia.year} ({dia.date().isoformat()}) en las fincas. Las fechas que te pidan "
+        "('hoy', 'ayer', 'el lunes', 'el 30 de septiembre') se cuentan desde este dia, y "
+        "una fecha sin año es la mas reciente que no este en el futuro."
+    )
+
+
 def responder(pregunta: str, remitente: str) -> str | None:
     """Contesta la pregunta de un administrador con datos de la base.
 
@@ -348,7 +423,7 @@ def responder(pregunta: str, remitente: str) -> str | None:
 
     try:
         texto = modelo_ia.conversar_con_herramientas(
-            SYSTEM_PROMPT, pregunta, HERRAMIENTAS, ejecutar, max_rondas=MAX_RONDAS
+            f"{SYSTEM_PROMPT}\n\n{_fecha_de_hoy()}", pregunta, HERRAMIENTAS, ejecutar, max_rondas=MAX_RONDAS
         )
     except Exception:
         logger.exception("No se pudo responder la consulta de %s", remitente)
